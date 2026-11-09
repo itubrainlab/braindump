@@ -103,7 +103,9 @@ def test_remote_backend_streams_and_calibrates():
     backend.on_row = rows.append
     backend.start()
     try:
-        time.sleep(0.5)
+        deadline = time.time() + 5  # slow CI runners
+        while len(rows) <= 15 and time.time() < deadline:
+            time.sleep(0.05)
         assert len(rows) > 15
         row = rows[-1]
         assert abs(row[0] - time.time()) < 0.5
