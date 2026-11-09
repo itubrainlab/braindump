@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "braindump"
+dynamic = ["version"]
+description = "brAIn dump: multi-device recording for the brAIn lab (g.tec Unicorn EEG, Gazepoint GP3 eye tracking) into BIDS"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "gpype[gui,lsl,formats]>=4.1,<5",
+    # Rhino Recorder supplies the Unicorn's g.Pype sources, nodes and views.
+    "rhinorecorder @ git+https://github.com/itubrainlab/rhinorecorder@v0.3.0",
+    # OpenGP3: the GP3 driver, gaze tracker and Open Gaze API client.
+    "opengp3 @ git+https://github.com/itubrainlab/opengp3@v0.3.0",
+    "pyedflib>=0.1.38",
+    "PySide6>=6.10.1,<6.12",
+    "pyqtgraph>=0.13.3",
+    "opencv-python>=4.8",
+]
+keywords = ["eeg", "eye tracking", "bids", "unicorn", "gazepoint", "gp3", "gpype", "recorder"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7", "bids-validator-deno>=2.0"]
+
+[project.gui-scripts]
+braindump = "braindump.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "braindump.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+braindump = ["resources/*.svg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

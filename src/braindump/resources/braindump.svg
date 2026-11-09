@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- brAIn dump: the brAIn lab's half brain, half circuit, with the
+       circuit's connections ending in the senses it records:
+       eye (eye tracking), EEG, heart and wireless streams. -->
+  <rect x="4" y="4" width="248" height="248" rx="36" fill="#BA0022"/>
+  <g fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- brain half, flat side on the midline -->
+    <path d="M124 38 C108 28 88 30 80 46 C62 44 50 58 52 74 C36 82 30 100 38 114 C26 126 28 146 42 154 C36 172 46 190 62 192 C66 208 84 218 100 212 C110 224 122 222 124 216 Z"/>
+    <path d="M80 46 C80 60 88 68 100 70"/>
+    <path d="M52 74 C62 84 74 88 84 90"/>
+    <path d="M38 114 C52 114 62 120 68 130"/>
+    <path d="M42 154 C56 150 68 154 76 164"/>
+    <path d="M62 192 C68 182 80 180 90 184"/>
+    <!-- circuit half: the logo's concentric arcs on the midline -->
+    <path d="M136 110 A18 18 0 0 1 136 146"/>
+    <path d="M136 90 A38 38 0 0 1 136 166"/>
+    <!-- connections to the senses -->
+    <path d="M136 72 V50 H150 L164 38 H180"/>
+    <path d="M156.5 98 H180"/>
+    <path d="M156.5 158 H180"/>
+    <path d="M136 184 V206 H150 L164 218 H180"/>
+  </g>
+  <!-- gyri end in synapses, as in the logo -->
+  <g fill="#BA0022" stroke="#fff" stroke-width="5">
+    <circle cx="105" cy="71" r="6"/>
+    <circle cx="90" cy="91" r="6"/>
+    <circle cx="71" cy="136" r="6"/>
+    <circle cx="80" cy="170" r="6"/>
+    <circle cx="96" cy="186" r="6"/>
+  </g>
+  <!-- the senses -->
+  <g fill="#fff">
+    <circle cx="204" cy="38" r="24"/>
+    <circle cx="204" cy="98" r="24"/>
+    <circle cx="204" cy="158" r="24"/>
+    <circle cx="204" cy="218" r="24"/>
+  </g>
+  <g fill="none" stroke="#BA0022" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- eye -->
+    <path d="M188 38 Q204 24 220 38 Q204 52 188 38 Z"/>
+    <!-- EEG -->
+    <path d="M187 100 H193 L197 88 L202 110 L207 92 L211 104 L214 98 H221"/>
+    <!-- wireless -->
+    <path d="M191.3 212.3 A18 18 0 0 1 216.7 212.3"/>
+    <path d="M195.5 216.5 A12 12 0 0 1 212.5 216.5"/>
+    <path d="M199.8 220.8 A6 6 0 0 1 208.2 220.8"/>
+  </g>
+  <g fill="#BA0022">
+    <circle cx="204" cy="38" r="5.5"/>
+    <!-- heart -->
+    <path d="M204 170 C190 160 186 152 188 146 C190 139 199 138 204 146 C209 138 218 139 220 146 C222 152 218 160 204 170 Z"/>
+    <circle cx="204" cy="225" r="3"/>
+  </g>
+</svg>
