@@ -100,8 +100,19 @@ def test_obs_over_ndi(tmp_path):
         obs.stop()
         # Recording starts as the stream connects, before its first frame
         # has said its rate: the file must still get the stream's 25 fps.
-        result = _record(project, [obs], seconds=2.0, task="game",
-                         warmup=0.0)
+        # It runs until frames have come, however long NDI takes to
+        # connect (seconds, on some CI runners).
+        obs.start()
+        try:
+            session = Session(project, [obs])
+            session.start(Subject(sub="01", task="game"))
+            deadline = time.time() + 20
+            while time.time() < deadline and (
+                    obs._recording is None or obs._recording.count < 15):
+                time.sleep(0.1)
+            result = session.stop()
+        finally:
+            obs.stop()
     finally:
         running = False
         ndi.send_destroy(sender)
@@ -110,9 +121,7 @@ def test_obs_over_ndi(tmp_path):
     meta = json.loads((beh / "sub-01_task-game_recording-screen_video.json")
                       .read_text())
     assert (meta["ImageWidth"], meta["ImageHeight"]) == (320, 180)
-    # The stream came through; how many frames depends on the machine
-    # (NDI takes a moment to connect, and a busy CI runner sends slowly).
-    assert 10 <= meta["VideoFrameCount"] <= 60
+    assert meta["VideoFrameCount"] >= 15
     assert abs(meta["VideoFrameRate"] - 25) < 0.01
     with gzip.open(beh / "sub-01_task-game_recording-screen_physio.tsv.gz",
                    "rt") as f:
