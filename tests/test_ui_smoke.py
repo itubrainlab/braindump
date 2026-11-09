@@ -17,6 +17,7 @@ def test_main_window_simulated(tmp_path):
     project.add_device("gp3", {})
     project.add_device("lsl", {})
     project.add_device("polar", {})
+    project.add_device("shimmer", {})
     window = MainWindow(project, simulate=True)
     window.show()
     for d in window.devices.values():

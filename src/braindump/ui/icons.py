@@ -62,6 +62,26 @@ def heart(color: str = theme.ICON) -> QIcon:
     return _icon(draw, color)
 
 
+def hand(color: str = theme.ICON) -> QIcon:
+    """A drop of sweat: skin conductance."""
+    def draw(p, c, s):
+        p.setPen(QPen(c, s * 0.08, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        path = QPainterPath()
+        path.moveTo(s * 0.5, s * 0.1)
+        path.cubicTo(s * 0.5, s * 0.1, s * 0.2, s * 0.48, s * 0.2, s * 0.62)
+        path.cubicTo(s * 0.2, s * 0.8, s * 0.34, s * 0.9, s * 0.5, s * 0.9)
+        path.cubicTo(s * 0.66, s * 0.9, s * 0.8, s * 0.8, s * 0.8, s * 0.62)
+        path.cubicTo(s * 0.8, s * 0.48, s * 0.5, s * 0.1, s * 0.5, s * 0.1)
+        p.drawPath(path)
+        p.drawLine(QPointF(s * 0.3, s * 0.64), QPointF(s * 0.38, s * 0.64))
+        p.drawLine(QPointF(s * 0.38, s * 0.64), QPointF(s * 0.44, s * 0.5))
+        p.drawLine(QPointF(s * 0.44, s * 0.5), QPointF(s * 0.52, s * 0.76))
+        p.drawLine(QPointF(s * 0.52, s * 0.76), QPointF(s * 0.6, s * 0.64))
+        p.drawLine(QPointF(s * 0.6, s * 0.64), QPointF(s * 0.7, s * 0.64))
+    return _icon(draw, color)
+
+
 def plus(color: str = theme.ICON) -> QIcon:
     def draw(p, c, s):
         p.setPen(QPen(c, s * 0.1, Qt.PenStyle.SolidLine,
@@ -131,6 +151,8 @@ def device(device_type: str, color: str = theme.ICON) -> QIcon:
         return network(color)
     if device_type == "polar":
         return heart(color)
+    if device_type == "shimmer":
+        return hand(color)
     return wave(color)
 
 

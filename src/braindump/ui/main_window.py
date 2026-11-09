@@ -23,6 +23,7 @@ from .forms import Relay, divider, tool
 from .gp3_page import GP3Page
 from .lsl_page import LslPage
 from .polar_page import PolarPage
+from .shimmer_page import ShimmerPage
 from .project_page import ProjectPage
 from .record_dialog import RecordDialog
 from .unicorn_page import UnicornPage
@@ -47,6 +48,8 @@ run's <code>_events.tsv</code>, with the EEG's triggers.</li>
 <li><b>Polar H10</b>: wear the strap (it switches on with skin contact);
 its ECG, heart rate and RR intervals are recorded as BIDS physio, each
 beat as a physioevent.</li>
+<li><b>Shimmer3 GSR+</b>: pair the unit over Bluetooth first; its skin
+conductance (and ear-clip PPG) is recorded as BIDS physio.</li>
 <li><b>Record</b> (●) asks for the participant, session, task and run,
 and records every connected device until you press it again (or
 ■).</li>
@@ -205,7 +208,8 @@ class MainWindow(QMainWindow):
         device.on_error = lambda message, k=key: self.relay.error.emit(
             k, message)
         page_cls = {"unicorn": UnicornPage, "gp3": GP3Page,
-                    "lsl": LslPage, "polar": PolarPage}[key]
+                    "lsl": LslPage, "polar": PolarPage,
+                    "shimmer": ShimmerPage}[key]
         page = page_cls(device)
         page.config_changed.connect(lambda k=key: self._save_config(k))
         page.connect_requested.connect(

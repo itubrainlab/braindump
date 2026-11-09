@@ -24,6 +24,8 @@ dependencies = [
     "opencv-python>=4.8",
     # Bluetooth Low Energy, for the Polar H10.
     "bleak>=0.22",
+    # Serial ports, for the Shimmer.
+    "pyserial>=3.5",
 ]
 keywords = ["eeg", "eye tracking", "bids", "unicorn", "gazepoint", "gp3", "gpype", "recorder"]
 classifiers = [
@@ -36,6 +38,8 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest>=7", "bids-validator-deno>=2.0"]
+# The Shimmer's driver is GPL-3.0, so it is optional.
+shimmer = ["pyshimmer>=1.0"]
 
 [project.gui-scripts]
 braindump = "braindump.app:main"

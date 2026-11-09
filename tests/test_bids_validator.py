@@ -25,7 +25,7 @@ VALIDATOR = (os.environ.get("BIDS_VALIDATOR")
 def test_recorded_dataset_is_valid(tmp_path):
     project = Project.create(tmp_path / "p", "Validation",
                              authors=["A. Author", "B. Author"])
-    for kind in ("unicorn", "gp3", "lsl", "polar"):
+    for kind in ("unicorn", "gp3", "lsl", "polar", "shimmer"):
         project.add_device(kind, {"simulate": True, "accelerometer": True})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]

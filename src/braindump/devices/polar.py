@@ -40,7 +40,7 @@ from .. import __version__
 from ..bids import NA, GzipTsvWriter, write_json
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget)
-from .push import PushSource
+from .push import ClockMap, PhysioLogger, PushSource
 
 # -- the protocol ----------------------------------------------------------------
 
@@ -137,18 +137,6 @@ def parse_heart_rate(data: bytes) -> HeartRate:
             rr.append(int.from_bytes(data[i:i + 2], "little") / 1024.0)
             i += 2
     return HeartRate(bpm, contact, rr)
-
-
-class ClockMap:
-    """Sensor time to this computer's time.time(): the smallest delay seen
-    lately is the best estimate of the offset."""
-
-    def __init__(self, window: int = 300):
-        self._offsets: deque[float] = deque(maxlen=window)
-
-    def __call__(self, sensor: float, received: float) -> float:
-        self._offsets.append(received - sensor)
-        return sensor + min(self._offsets)
 
 
 class BeatClock:
@@ -414,38 +402,6 @@ class _Simulated:
 
 
 # -- BIDS --------------------------------------------------------------------------------
-
-class PhysioLogger(GatedLogger):
-    """Rows of a push source, with their clock time, into a headerless
-    gzipped TSV, while recording."""
-
-    extension = ".tsv.gz"
-
-    def __init__(self, scale: float = 1.0, **kwargs):
-        super().__init__(**kwargs)
-        self.scale = scale
-        self.epoch = 0.0
-        self.first_sample: Optional[float] = None
-        self.last_sample: Optional[float] = None
-        self._writer: Optional[GzipTsvWriter] = None
-
-    def _open_file(self, path):
-        self._writer = GzipTsvWriter(Path(path))
-        self.first_sample = self.last_sample = None
-
-    def _write(self, block):
-        for row in block:
-            t = self.epoch + float(row[0])
-            if self.first_sample is None:
-                self.first_sample = t
-            self.last_sample = t
-            self._writer.write([t, *(float(v) * self.scale
-                                     for v in row[1:])])
-
-    def _close_file(self):
-        self._writer.close()
-        self._writer = None
-
 
 @dataclass
 class Graph:

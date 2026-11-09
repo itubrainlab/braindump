@@ -1,0 +1,176 @@
+# Test brAIn dump on Linux, Windows and macOS; build the three packages,
+# install each on its own platform and check it with every device
+# simulated. A pushed v* tag then publishes them as that release, with
+# docs/releases/<tag>.md as its notes.
+name: Test and build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # The packages bundle the Python uv finds: a relocatable, uv-managed one.
+  UV_PYTHON_PREFERENCE: only-managed
+  QT_QPA_PLATFORM: offscreen
+
+jobs:
+  tests:
+    name: Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Qt's libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - name: Set up .venv
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv -e ".[test,shimmer]"
+      - name: Tests
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then BIN=.venv/Scripts; else BIN=.venv/bin; fi
+          export BIDS_VALIDATOR="$(ls "$BIN"/bids-validator-deno* | head -1)"
+          "$BIN/python" -m pytest -q -rs
+
+  linux-and-windows:
+    name: Build Linux and Windows packages
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Qt's libraries
+        run: sudo apt-get update -q && sudo apt-get install -yq libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - name: Set up .venv
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv -e ".[test,shimmer]"
+      - name: Build
+        run: |
+          packaging/linux/build_linux.sh
+          packaging/windows/build_windows.sh
+      - name: Install and check the Linux package
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME" "$RUNNER_TEMP/pkg"
+          tar -xzf dist/brAIndump-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP/pkg"
+          "$RUNNER_TEMP"/pkg/brAIndump-*/install.sh
+          APP="$HOME/.local/share/braindump/app"
+          "$HOME/.local/bin/braindump" --version
+          "$APP/python/bin/python3" -I packaging/smoke_test.py \
+            "$HOME/.local/share/braindump/runtime/$(cat "$APP/build-id")" \
+            "$(.venv/bin/python -c 'import braindump; print(braindump.__version__)')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  windows-check:
+    name: Install and check the Windows package
+    needs: linux-and-windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: dist
+      - name: Install, check and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive (Get-Item dist\*.zip).FullName -DestinationPath $env:RUNNER_TEMP\pkg
+          $pkg = (Get-ChildItem $env:RUNNER_TEMP\pkg -Directory)[0].FullName
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$pkg\install.ps1"
+          if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+          $app = "$env:LOCALAPPDATA\brAIn dump\app"
+          if (-not (Test-Path "$([Environment]::GetFolderPath('Programs'))\brAIn dump.lnk")) { throw 'no Start menu shortcut' }
+          $build = (Get-Content "$app\build-id" -Raw).Trim()
+          $version = $build.Split('-')[0]
+          & "$app\python\python.exe" -I "$app\launcher.py" --version
+          if ($LASTEXITCODE -ne 0) { throw 'launcher failed' }
+          & "$app\python\python.exe" -I packaging\smoke_test.py "$env:LOCALAPPDATA\brAIn dump\runtime\$build" $version
+          if ($LASTEXITCODE -ne 0) { throw 'smoke test failed' }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$pkg\uninstall.ps1"
+          if (Test-Path "$env:LOCALAPPDATA\brAIn dump") { throw 'uninstall left files' }
+
+  macos:
+    name: Build and check the macOS app
+    needs: tests
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Set up .venv
+        run: |
+          uv python install 3.12
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv -e ".[test,shimmer]"
+      - name: Build
+        run: packaging/macos/build_app.sh
+      - name: Check the app
+        run: |
+          APP="dist/brAIn dump.app"
+          RES="$APP/Contents/Resources"
+          "$APP/Contents/MacOS/braindump" --version
+          "$RES/python/bin/python3" -I -B packaging/smoke_test.py \
+            "$HOME/Library/Application Support/brAIn dump/runtime/$(cat "$RES/build-id")" \
+            "$(.venv/bin/python -c 'import braindump; print(braindump.__version__)')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-and-windows, windows-check, macos]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          NOTES="docs/releases/$TAG.md"
+          cd dist
+          sha256sum brAIndump-* > SHA256SUMS
+          cat SHA256SUMS
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber brAIndump-* SHA256SUMS
+          elif [ -f "../$NOTES" ]; then
+            gh release create "$TAG" --verify-tag --title "brAIn dump ${TAG#v}" \
+              --notes-file "../$NOTES" brAIndump-* SHA256SUMS
+          else
+            gh release create "$TAG" --verify-tag --title "brAIn dump ${TAG#v}" \
+              --generate-notes brAIndump-* SHA256SUMS
+          fi

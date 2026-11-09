@@ -1,19 +1,45 @@
 # brAIn dump
 
-Multi-device recording for the ITU brAIn lab. Records the **g.tec Unicorn
-Hybrid Black** (EEG, through [g.Pype](https://gpype.gtec.at) and
-[Rhino Recorder](https://github.com/itubrainlab/rhinorecorder)'s nodes) and the
-**Gazepoint GP3** (eye tracking, through
-[OpenGP3](https://github.com/itubrainlab/opengp3), either on this computer or
-remotely over the Open Gaze API) into a **BIDS** dataset. It runs on Windows,
-macOS and Linux.
+Multi-device recording for the ITU brAIn lab, into a **BIDS** dataset, on
+Windows, macOS and Linux:
+
+- **g.tec Unicorn Hybrid Black**: EEG, through [g.Pype](https://gpype.gtec.at)
+  and [Rhino Recorder](https://github.com/itubrainlab/rhinorecorder)'s nodes;
+- **Gazepoint GP3**: eye tracking, through
+  [OpenGP3](https://github.com/itubrainlab/opengp3), on this computer or on
+  another one over the Open Gaze API;
+- **Polar H10**: ECG, heart rate and RR intervals;
+- **Shimmer3 GSR+**: skin conductance and pulse (PPG);
+- **LSL streams**: markers from any Lab Streaming Layer stream, as events.
+
+## Download
+
+Get the package for your system from the
+[latest release](https://github.com/itubrainlab/braindump/releases/latest):
+
+| System | Package | Install |
+|---|---|---|
+| Windows 10 or 11, 64-bit | `brAIndump-<version>-windows-x86_64.zip` | Unpack it and double-click `install.cmd`; open brAIn dump from the Start menu. |
+| macOS 14 or later, Apple Silicon | `brAIndump-<version>-macos-arm64.dmg` | Drag **brAIn dump** to Applications. The first time, right-click it and choose **Open** (the app is not notarized). |
+| Linux x86_64, glibc 2.34+ (Ubuntu 22.04, Debian 12, Fedora 35 or later) | `brAIndump-<version>-linux-x86_64.tar.gz` | Unpack it and run `./install.sh`; open brAIn dump from the applications menu or run `braindump`. |
+
+None needs administrator rights. **The first launch needs an internet
+connection:** the packages contain their own Python and brAIn dump, but not
+g.Pype or g.tec's Unicorn driver, which g.tec's licences do not allow to be
+bundled. The first launch downloads them and the other libraries from PyPI,
+at the versions the release was tested with.
+
+## Running from source
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -e ".[test]"
+python -m venv .venv && .venv/bin/pip install -e ".[test,shimmer]"
 .venv/bin/braindump              # choose or create a project
 .venv/bin/braindump --simulate   # no hardware
-.venv/bin/python -m pytest
+.venv/bin/python -m pytest       # BIDS_VALIDATOR=.venv/bin/bids-validator-deno to validate too
 ```
+
+`shimmer` installs pyshimmer (GPL-3.0), which the Shimmer3 GSR+ needs; the
+rest of brAIn dump does without it.
 
 - **Projects** (`<name>.braindump`): the devices, each one's configuration
   (saved as you change it), the BIDS output folder, the default task and the
@@ -37,3 +63,42 @@ python -m venv .venv && .venv/bin/pip install -e ".[test]"
   `eeg/*_eeg.bdf` (+ json/channels/events) and the eye tracking as BIDS 1.10
   physio (`recording-eye1|eye2|gaze`, plus physioevents), with each file's
   start time in `scans.tsv`.
+
+## Devices by system
+
+| | Windows | macOS | Linux |
+|---|---|---|---|
+| Unicorn | pair it first | found over Bluetooth | found over Bluetooth |
+| GP3, this computer | WinUSB driver via [Zadig](https://zadig.akeo.ie) once | nothing | a USB rule, installed once (asks for the password) |
+| GP3, remote | nothing | nothing | nothing |
+| Polar H10 | Bluetooth LE | Bluetooth LE | Bluetooth LE (BlueZ) |
+| Shimmer3 GSR+ | pair it; its outgoing COM port | pair it; `/dev/cu.Shimmer3-…` | pair it and `rfcomm bind`; `/dev/rfcomm0` |
+| LSL | nothing | nothing | nothing |
+
+g.tec's Unicorn driver has builds for Windows x64, Linux x86_64 and Apple
+Silicon Macs only.
+
+## Packages and releases
+
+`packaging/` builds the three packages (each needs uv, git and the
+project's `.venv`; the Linux and Windows ones build on macOS or Linux):
+
+```bash
+packaging/macos/build_app.sh          # dist/brAIndump-<version>-macos-arm64.dmg
+packaging/linux/build_linux.sh        # dist/brAIndump-<version>-linux-x86_64.tar.gz
+packaging/windows/build_windows.sh    # dist/brAIndump-<version>-windows-x86_64.zip
+```
+
+The [Test and build](.github/workflows/build.yml) workflow runs the tests on
+all three systems, builds the packages, installs each on its own system and
+runs [packaging/smoke_test.py](packaging/smoke_test.py) with every device
+simulated. To release: write `docs/releases/v<version>.md`, set
+`__version__` in `src/braindump/__init__.py`, commit, and push a
+`v<version>` tag.
+
+## Licence
+
+brAIn dump is MIT licensed; see [LICENSE](LICENSE). It runs on g.Pype, under
+the **g.tec Non-Commercial License**: free for academic research and teaching
+with a g.tec amplifier; read it before use. The Shimmer's driver, pyshimmer,
+is GPL-3.0 and optional.

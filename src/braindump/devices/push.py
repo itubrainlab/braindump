@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from typing import Optional, Sequence
 
 import numpy as np
 from gpype.backend.core.o_port import OPort
 from gpype.backend.sources.base.source import Source
 from gpype.common.constants import Constants
+from pathlib import Path
+from rhinorecorder.nodes import GatedLogger
+
+from ..bids import GzipTsvWriter
 
 PORT_OUT = Constants.Defaults.PORT_OUT
 
@@ -60,3 +65,47 @@ class PushSource(Source):
     def step(self, data):
         pending, self._pending = self._pending, None
         return None if pending is None else {PORT_OUT: pending}
+
+
+class ClockMap:
+    """Sensor time to this computer's time.time(): the smallest delay seen
+    lately is the best estimate of the offset."""
+
+    def __init__(self, window: int = 300):
+        self._offsets: deque[float] = deque(maxlen=window)
+
+    def __call__(self, sensor: float, received: float) -> float:
+        self._offsets.append(received - sensor)
+        return sensor + min(self._offsets)
+
+
+class PhysioLogger(GatedLogger):
+    """Rows of a push source, with their clock time, into a headerless
+    gzipped TSV, while recording."""
+
+    extension = ".tsv.gz"
+
+    def __init__(self, scale: float = 1.0, **kwargs):
+        super().__init__(**kwargs)
+        self.scale = scale
+        self.epoch = 0.0
+        self.first_sample: Optional[float] = None
+        self.last_sample: Optional[float] = None
+        self._writer: Optional[GzipTsvWriter] = None
+
+    def _open_file(self, path):
+        self._writer = GzipTsvWriter(Path(path))
+        self.first_sample = self.last_sample = None
+
+    def _write(self, block):
+        for row in block:
+            t = self.epoch + float(row[0])
+            if self.first_sample is None:
+                self.first_sample = t
+            self.last_sample = t
+            self._writer.write([t, *(float(v) * self.scale
+                                     for v in row[1:])])
+
+    def _close_file(self):
+        self._writer.close()
+        self._writer = None
