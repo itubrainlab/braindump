@@ -107,5 +107,12 @@ def test_obs_over_ndi(tmp_path):
     meta = json.loads((beh / "sub-01_task-game_recording-obs_video.json")
                       .read_text())
     assert (meta["ImageWidth"], meta["ImageHeight"]) == (320, 180)
-    assert 35 <= meta["VideoFrameCount"] <= 60
+    # The stream came through; how many frames depends on the machine
+    # (NDI takes a moment to connect, and a busy CI runner sends slowly).
+    assert 10 <= meta["VideoFrameCount"] <= 60
     assert abs(meta["VideoFrameRate"] - 25) < 0.01
+    with gzip.open(beh / "sub-01_task-game_recording-obs_physio.tsv.gz",
+                   "rt") as f:
+        times = [float(line.split("\t")[0]) for line in f]
+    assert len(times) == meta["VideoFrameCount"]
+    assert all(b > a for a, b in zip(times, times[1:]))
