@@ -80,11 +80,13 @@ finally:
     for d in devices:
         d.stop()
 assert not result.problems, result.problems
-eeg = project.output_path / "sub-01" / "eeg"
-expected = ["eeg.bdf", "recording-eye1_physio.tsv.gz", "events.tsv",
-            "recording-ecg_physio.tsv.gz", "recording-gsr_physio.tsv.gz"]
-for suffix in expected:
-    path = eeg / f"sub-01_task-smoke_{suffix}"
+subject = project.output_path / "sub-01"
+expected = ["eeg/eeg.bdf", "eeg/events.tsv", "eeg/recording-ecg_physio.tsv.gz",
+            "eeg/recording-gsr_physio.tsv.gz",
+            "beh/recording-eye1_physio.tsv.gz", "beh/events.tsv"]
+for item in expected:
+    folder, suffix = item.split("/")
+    path = subject / folder / f"sub-01_task-smoke_{suffix}"
     assert path.exists() and path.stat().st_size > 0, path
 for name, samples in result.devices.items():
     print(f"  {name}: {samples} samples", flush=True)

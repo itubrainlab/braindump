@@ -60,9 +60,10 @@ rest of brAIn dump does without it.
   (`trial_type` = stream name, `value` = sample) in the run's `_events.tsv`,
   merged with the EEG's triggers and timed from the EEG's first sample.
 - **Record** asks for the participant, session, task and run, then writes
-  `eeg/*_eeg.bdf` (+ json/channels/events) and the eye tracking as BIDS 1.10
-  physio (`recording-eye1|eye2|gaze`, plus physioevents), with each file's
-  start time in `scans.tsv`.
+  `eeg/*_eeg.bdf` (+ json/channels/events) and the eye tracking as BIDS
+  eye-tracking physio under `beh/` (`recording-eye1|eye2|gaze`, plus
+  physioevents and the run's events with `StimulusPresentation`), with each
+  file's start time in `scans.tsv`.
 
 ## Devices by system
 

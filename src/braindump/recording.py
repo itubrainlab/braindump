@@ -173,11 +173,19 @@ class Session:
             extra = {}
             for _, r in ended:
                 extra.update(r.events_metadata)
+            # The run's events go with its data: into the EEG's folder,
+            # and into beh/ when something is there (eye tracking always
+            # is: its StimulusPresentation belongs in that events.json).
+            folders = set()
             if events or eeg or extra:
+                folders.add(target.datatype)
+            if any(d.MODALITY == "eyetrack" for d, _ in ended):
+                folders.add("beh")
+            for folder in sorted(folders):
                 try:
                     result.files += self._write_events(
-                        target, events, reference or target.started,
-                        has_eeg=bool(eeg), extra=extra)
+                        target, folder, events, reference or target.started,
+                        has_eeg=bool(eeg) and folder == "eeg", extra=extra)
                 except Exception as error:  # noqa: BLE001
                     problems.append(f"events.tsv: {error}")
             self.dataset.add_participant(e.sub, {
@@ -200,12 +208,13 @@ class Session:
     #: The EEG's sampling rate, for events.tsv's sample column.
     EEG_RATE = 250.0
 
-    def _write_events(self, target: RecordingTarget, events: list[Event],
+    def _write_events(self, target: RecordingTarget, datatype: str,
+                      events: list[Event],
                       reference: float, has_eeg: bool,
                       extra: dict) -> list[Path]:
         """The run's events.tsv: every device's events, with onsets from
         the reference device's first sample (the EEG's, when recorded)."""
-        path = self.dataset.path(target.entities, target.datatype, "events",
+        path = self.dataset.path(target.entities, datatype, "events",
                                  ".tsv")
         columns = ["onset", "duration", "trial_type", "value", "source"]
         if has_eeg:
@@ -238,7 +247,7 @@ class Session:
             meta["sample"] = {"Description": "EEG sample of the onset "
                                              "(from 0)"}
         meta.update(extra)
-        if target.datatype == "beh":
+        if datatype == "beh":
             # The behavioural events file is the run's only data sidecar.
             meta = {"TaskName": target.entities.task,
                     **target.common_metadata, **meta}

@@ -11,14 +11,19 @@ The layout brAIn dump writes, for one recording of every device::
           eeg/
             sub-.._ses-.._task-.._run-.._eeg.bdf         Unicorn (BDF)
             sub-.._eeg.json  _channels.tsv  _events.tsv
+            sub-.._recording-ecg_physio.tsv.gz  .json    Polar H10, ...
+          beh/
+            sub-.._events.tsv  .json                     with StimulusPresentation
             sub-.._recording-eye1_physio.tsv.gz  .json   GP3, left eye
             sub-.._recording-eye2_physio.tsv.gz  .json   GP3, right eye
             sub-.._recording-eye1_physioevents.tsv.gz ..
             sub-.._recording-gaze_physio.tsv.gz  .json   GP3, every channel
 
-Eye tracking follows BIDS 1.10 (``physio`` with ``PhysioType``
-``eyetrack``), placed with the EEG it was recorded with, or under
-``beh/`` when no EEG was recorded. ``scans.tsv`` gives each file's
+Eye tracking follows BIDS's eye-tracking specification (``physio`` with
+``PhysioType`` ``eyetrack``) and is behavioural data: always under
+``beh/``, with the run's events and their ``StimulusPresentation``. The
+other physiological recordings go with the EEG when there is EEG, else
+under ``beh/`` too. ``scans.tsv`` gives each file's
 acquisition time to the microsecond, on this computer's clock, which is
 what lines the devices up.
 """
@@ -187,16 +192,18 @@ Recorded with {APP_NAME} {__version__}
 
 - `eeg/*_eeg.bdf`: EEG (g.tec Unicorn Hybrid Black), with `_eeg.json`,
   `_channels.tsv`. Recordings are raw: no software filters.
-- `*_recording-eye1_physio.tsv.gz` / `eye2`: eye tracking (Gazepoint GP3),
-  left and right eye, as BIDS physio with `PhysioType` `eyetrack`; fixations
-  and blinks in `_physioevents.tsv.gz`. `recording-gaze` holds every
-  channel the tracker reports.
+- `beh/*_recording-eye1_physio.tsv.gz` / `eye2`: eye tracking (Gazepoint
+  GP3), left and right eye, as BIDS physio with `PhysioType` `eyetrack`;
+  fixations and blinks in `_physioevents.tsv.gz`. `recording-gaze` holds
+  every channel the tracker reports. Eye tracking is behavioural data, so
+  it is under `beh/` even when EEG was recorded, with a copy of the run's
+  events whose sidecar describes the screen (`StimulusPresentation`).
 - `*_recording-ecg_physio.tsv.gz`: ECG from a Polar H10 chest strap
   (`cardiac`, µV, 130 Hz), with each heart beat and its RR interval in
   `_physioevents.tsv.gz`; `recording-accel`: the strap's acceleration.
 - `*_events.tsv`: the EEG's triggers and the samples of the recorded Lab
   Streaming Layer streams (`trial_type` is the stream's name).
-- Eye tracking without EEG goes under `beh/`.
+- Without EEG, the physiological recordings go under `beh/` too.
 
 ## Timing
 

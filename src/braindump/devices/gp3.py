@@ -10,6 +10,7 @@ pipeline through :class:`GazeSource`::
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from dataclasses import dataclass, field
@@ -37,6 +38,9 @@ PORT_OUT = Constants.Defaults.PORT_OUT
 #: GP3's channels.
 PIPELINE_CHANNELS = ["TIME", *CHANNELS]
 COL = {name: i for i, name in enumerate(PIPELINE_CHANNELS)}
+
+#: Where BIDS eye-tracking files go: beh/, even beside EEG.
+DATATYPE = "beh"
 
 MODES = {"local": "On this computer (OpenGP3 driver)",
          "remote": "On another computer (Open Gaze API)"}
@@ -351,7 +355,9 @@ class GP3Device(Device):
             graph, backend = self.graph, self.backend
             if graph is None or backend is None:
                 raise RuntimeError("The GP3 is not running.")
-            path = target.dataset.path(target.entities, target.datatype,
+            # Eye tracking is behavioural data: beh/, whatever else is
+            # recorded with it.
+            path = target.dataset.path(target.entities, DATATYPE,
                                        "physio", ".tsv.gz", recording="eye1")
             logger = graph.logger
             logger.epoch = graph.source.epoch
@@ -468,22 +474,30 @@ class GP3Device(Device):
             else NA,
             "ScreenSize": screen_size_m(screen)[0] if screen else NA,
             "ScreenOrigin": ["top", "left"],
+            "EyeTrackerDistance": round(screen.distance_cm / 100, 3)
+            if screen else NA,
             "CalibrationCount": len(self.calibrations),
             "CalibrationType": f"HV{cal.n_points}" if cal else NA,
         }
         if cal is not None:
-            if cal.accuracy_deg is not None:
-                eye_meta["AverageCalibrationError"] = round(cal.accuracy_deg,
-                                                            3)
-            if cal.max_error_deg is not None:
-                eye_meta["MaximalCalibrationError"] = round(
-                    cal.max_error_deg, 3)
+            # BIDS gives calibration errors in pixel, mm or cm: pixels here,
+            # degrees in CalibrationQuality.
+            eye_meta["CalibrationUnit"] = "pixel"
+            errors = [math.hypot((g[0] - p.x) * cal.screen[0],
+                                 (g[1] - p.y) * cal.screen[1])
+                      for p in cal.points for g in p.gaze.values()]
+            if cal.average_error_px is not None:
+                eye_meta["AverageCalibrationError"] = round(
+                    cal.average_error_px, 2)
+            if errors:
+                eye_meta["MaximalCalibrationError"] = round(max(errors), 2)
             eye_meta["CalibrationPosition"] = [[round(p.x * cal.screen[0]),
                                                 round(p.y * cal.screen[1])]
                                                for p in cal.points]
             eye_meta["CalibrationQuality"] = {
                 "Summary": cal.summary(),
-                "AverageErrorPixels": cal.average_error_px,
+                "AccuracyDegrees": cal.accuracy_deg,
+                "MaximalErrorDegrees": cal.max_error_deg,
                 "ValidPoints": cal.valid_points,
                 "Time": datetime.fromtimestamp(cal.created).isoformat(),
             }

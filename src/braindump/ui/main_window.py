@@ -56,7 +56,8 @@ and records every connected device until you press it again (or
 </ol>
 <p>The dataset: EEG as BDF with <code>_eeg.json</code>,
 <code>_channels.tsv</code> and <code>_events.tsv</code>; eye tracking as
-BIDS physio (<code>recording-eye1</code> left, <code>recording-eye2</code>
+behavioural data, under <code>beh/</code>, in BIDS physio
+(<code>recording-eye1</code> left, <code>recording-eye2</code>
 right, <code>recording-gaze</code> every GP3 channel), with fixations and
 blinks in <code>_physioevents</code>. <code>scans.tsv</code> holds each
 file's start time, to the microsecond, on this computer's clock.</p>
