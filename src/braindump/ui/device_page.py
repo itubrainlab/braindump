@@ -45,6 +45,15 @@ class DevicePage(QWidget):
         header.addWidget(self.connect_button)
         column.addLayout(header)
 
+        #: Says so when brAIn dump was started with --simulate: every
+        #: device is simulated then, whatever its settings say.
+        self.forced = hint(
+            "brAIn dump was started with --simulate: every device is "
+            "simulated, whatever its settings say. Start it without "
+            "--simulate to use the hardware.")
+        self.forced.setStyleSheet(f"color: {theme.WARNING}")
+        self.forced.setVisible(device.force_simulate)
+        column.addWidget(self.forced)
         self.tabs = QTabWidget()
         column.addWidget(self.tabs, 1)
         self.settings_note = hint("")
@@ -56,6 +65,15 @@ class DevicePage(QWidget):
         layout.addWidget(self.settings_note)
         for form in forms:
             layout.addWidget(form)
+            box_ = getattr(form, "fields", {}).get("simulate")
+            if box_ is not None and self.device.force_simulate:
+                # Shown ticked, but not saved: the project keeps its own
+                # setting for when brAIn dump runs without --simulate.
+                box_.blockSignals(True)
+                box_.setChecked(True)
+                box_.blockSignals(False)
+                box_.setEnabled(False)
+                box_.setToolTip("brAIn dump was started with --simulate")
         layout.addStretch(1)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -70,6 +88,8 @@ class DevicePage(QWidget):
         text = {IDLE: "not connected", STARTING: "connecting…",
                 RUNNING: "recording" if d.recording else "connected",
                 STOPPING: "stopping…"}.get(state, state)
+        if d.simulated:
+            text += " · simulated"
         ident = d.identity()
         self.state_label.setText(f"{ident} · {text}" if ident else text)
         self.connect_button.setText("Disconnect" if state == RUNNING
