@@ -40,7 +40,7 @@ class RecordingTarget:
     entities: Entities
     #: BIDS datatype folder: "eeg" when EEG is recorded, else "beh".
     datatype: str
-    #: When Record was pressed (time.time()).
+    #: When Record was pressed (braindump.clock).
     started: float
     #: Mains frequency, in Hz (BIDS PowerLineFrequency).
     power_line_frequency: int = 50
@@ -51,10 +51,52 @@ class RecordingTarget:
 
 
 @dataclass
+class Timeline:
+    """The recording's time base: when its reference device's first
+    sample was taken, and how fast that device's samples really came.
+
+    BIDS gives StartTime and event onsets in the reference data's own
+    time: sample number over its nominal rate. With EEG, that is the
+    EEG's 250 Hz, which its amplifier's clock keeps only to some tens of
+    ppm, so a clock time maps to EEG time through the rate measured over
+    the recording, not the nominal one. Without EEG, it is plain seconds
+    from the first sample of the earliest device.
+    """
+
+    #: Clock time (braindump.clock) of the reference's first sample.
+    t0: float
+    #: Samples per second the reference really delivered, by the clock.
+    rate: float = 1.0
+    #: Samples per second its files say (BIDS SamplingFrequency).
+    nominal_rate: float = 1.0
+
+    def seconds(self, t: float) -> float:
+        """Clock time ``t`` in the reference's own time, from its first
+        sample."""
+        return (t - self.t0) * self.rate / self.nominal_rate
+
+    def sample(self, t: float) -> int:
+        """The reference's sample at clock time ``t`` (from 0)."""
+        return int(round((t - self.t0) * self.rate))
+
+    def clock(self, sample: float) -> float:
+        """Clock time of the reference's sample ``sample``."""
+        return self.t0 + sample / self.rate
+
+
+def start_time(reference: Optional[Timeline], first: Optional[float]
+               ) -> float:
+    """BIDS StartTime of data whose first sample came at ``first``."""
+    if reference is None or first is None:
+        return 0.0
+    return round(reference.seconds(first), 6)
+
+
+@dataclass
 class Event:
     """Something that happened during a recording, for events.tsv."""
 
-    #: time.time() of its onset.
+    #: Clock time (braindump.clock) of its onset.
     time: float
     trial_type: str
     value: str = ""
@@ -71,11 +113,14 @@ class RecordedFiles:
     scans: list[tuple[Path, datetime]] = field(default_factory=list)
     #: Every file written, sidecars included.
     files: list[Path] = field(default_factory=list)
-    #: time.time() of the first sample, if any was written.
+    #: Clock time (braindump.clock) of the first sample, if any.
     first_sample: Optional[float] = None
-    #: Writes the sidecars, given the first sample time of the recording's
-    #: reference device (the EEG when there is one).
-    finalize: Callable[[Optional[float]], None] = lambda reference: None
+    #: Writes the sidecars, given the recording's time base (the EEG's,
+    #: when there is EEG).
+    finalize: Callable[[Optional["Timeline"]], None] = \
+        lambda reference: None
+    #: This device's own time base, when it can be the reference (EEG).
+    timeline: Optional["Timeline"] = None
     samples: int = 0
     #: Events for the run's events.tsv.
     events: list[Event] = field(default_factory=list)

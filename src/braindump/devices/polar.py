@@ -36,10 +36,11 @@ import gpype as gp
 import numpy as np
 from rhinorecorder.nodes import GatedLogger, SweepTap
 
-from .. import __version__
+from .. import __version__, clock
 from ..bids import NA, GzipTsvWriter, write_json
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
-                   RecordedFiles, RecordingTarget)
+                   RecordedFiles, RecordingTarget, Timeline,
+                   start_time)
 from .push import ClockMap, PhysioLogger, PushSource
 
 # -- the protocol ----------------------------------------------------------------
@@ -173,6 +174,10 @@ class BeatClock:
 
 @dataclass
 class PolarConfig(DeviceConfig):
+    #: The Bluetooth link's minimum delay, in ms, taken off the time
+    #: stamps when known (0: samples are placed when the fastest reading
+    #: arrived).
+    latency_ms: float = 0.0
     #: The strap's name (e.g. "Polar H10 A1B2C3D4") or Bluetooth address;
     #: empty connects to the first Polar H10 found.
     device: str = ""
@@ -284,10 +289,10 @@ class _Link:
             def pmd(_, data):
                 frame = parse_pmd(bytes(data))
                 if frame is not None:
-                    self.on_pmd(frame, time.time())
+                    self.on_pmd(frame, clock.now())
 
             def hr(_, data):
-                self.on_hr(parse_heart_rate(bytes(data)), time.time())
+                self.on_hr(parse_heart_rate(bytes(data)), clock.now())
 
             await client.start_notify(PMD_CONTROL, lambda *_: None)
             await client.start_notify(PMD_DATA, pmd)
@@ -348,7 +353,7 @@ class _Simulated:
 
     def _run(self):
         rng = np.random.default_rng()
-        t0 = time.time()
+        t0 = clock.now()
         sensor0 = 7.0e8  # the strap's own clock
         n = 0
         next_beat, beats = t0 + 0.3, []
@@ -357,7 +362,7 @@ class _Simulated:
         acc_n, acc_period = 0, 1.0 / self.config.acc_rate
         while self._running:
             time.sleep(73 / ECG_RATE)  # the H10 sends 73 samples a frame
-            now = time.time()
+            now = clock.now()
             samples = []
             while (n + 1) / ECG_RATE <= now - t0:
                 t = t0 + n / ECG_RATE
@@ -501,7 +506,9 @@ class PolarDevice(Device):
                 p.add_error_handler(self._pipeline_failed)
                 p.start()
                 self.graph = graph
-                self._clocks = {ECG: ClockMap(), ACC: ClockMap()}
+                latency = cfg.latency_ms / 1000.0
+                self._clocks = {ECG: ClockMap(latency_s=latency),
+                                ACC: ClockMap(latency_s=latency)}
                 self._last_stamp = {}
                 self._beat_clock = BeatClock()
                 self.beats.clear()
@@ -614,7 +621,7 @@ class PolarDevice(Device):
             out.write([t, None, "beat", round(rr, 4), bpm])
         out.close()
 
-        def finalize(reference: Optional[float]) -> None:
+        def finalize(reference: Optional[Timeline]) -> None:
             self._write_sidecars(target, written, events_path, info,
                                  acc_rate, reference)
 
@@ -638,8 +645,7 @@ class PolarDevice(Device):
                                     "clock spaces the samples)",
                      "Units": "s"}
         for recording, (path, first, last, samples) in written.items():
-            start = (first - reference) if (first is not None
-                                            and reference) else 0.0
+            start = start_time(reference, first)
             meta = {
                 "PhysioType": "generic",
                 "SamplingFrequency": ECG_RATE if recording == "ecg"

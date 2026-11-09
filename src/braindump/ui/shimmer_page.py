@@ -88,6 +88,11 @@ class ShimmerPage(DevicePage):
         unit.form.addRow("", hint(pairing_help()))
         unit.boolean("simulate", "Simulated", "A simulated unit (no "
                      "hardware)")
+        unit.number("latency_ms", "Bluetooth delay", 0, 500,
+                    "The link's minimum delay, taken off the time stamps "
+                    "when known. The clock offset is measured "
+                    "continuously; only this fixed part cannot be.",
+                    " ms", 0)
         unit.choice("sampling_rate", "Sampling rate",
                     {r: f"{r:g} Hz" for r in RATES})
         unit.boolean("ppg", "Ear clip", "Record the ear clip's pulse (PPG, "

@@ -108,6 +108,11 @@ class PolarPage(DevicePage):
         strap.form.addRow("", row(self.find, self.found, None))
         strap.boolean("simulate", "Simulated", "A simulated strap (no "
                       "hardware)")
+        strap.number("latency_ms", "Bluetooth delay", 0, 500,
+                     "The link's minimum delay, taken off the time stamps "
+                     "when known. The clock offset is measured "
+                     "continuously; only this fixed part cannot be.",
+                     " ms", 0)
         acc = ConfigForm("Accelerometer", cfg)
         acc.boolean("accelerometer", "Record", "The strap's acceleration, "
                     "as recording-accel")

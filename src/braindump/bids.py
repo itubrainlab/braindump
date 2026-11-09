@@ -207,10 +207,23 @@ Recorded with {APP_NAME} {__version__}
 
 ## Timing
 
-Every device is time-stamped on the recording computer's clock.
-`scans.tsv` gives each file's first sample to the microsecond; event onsets
-and the eye tracker's `StartTime` count from the EEG's first sample (or,
-without EEG, from the earliest first sample).
+Every device is time-stamped on one clock of the recording computer: a
+monotonic one (it never jumps, whatever the system's time synchronisation
+does), reading seconds since 1970. The `timestamp` columns of the physio
+files are on it, and `scans.tsv` gives each file's first sample on it to
+the microsecond.
+
+- EEG: every sample's acquisition time (corrected for Bluetooth bursts
+  and the link's delay) is kept, and a line fitted through them gives
+  when the first sample was acquired and the rate the headset's clock
+  really ran at (`RecordingTiming` in `_eeg.json`).
+- Event onsets and the other recordings' `StartTime` are in the EEG's own
+  time, sample / 250 Hz, through that measured rate, so they stay on the
+  right sample however much the headset's clock drifts. Without EEG, they
+  are seconds from the earliest first sample.
+- Bluetooth devices (Polar H10, Shimmer) and a remote GP3 are spaced by
+  their own clocks and moved onto the computer's by the smallest delay
+  seen over 30 s; LSL samples by LSL's own clock correction.
 """
 
     def add_participant(self, sub: str, info: Optional[dict] = None) -> None:

@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .. import clock
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    Event, RecordedFiles, RecordingTarget)
 
@@ -164,13 +165,16 @@ class LslDevice(Device):
     # -- clocks ------------------------------------------------------------
 
     def clock_offset(self) -> float:
-        """time.time() minus LSL's clock, measured every few seconds."""
+        """brAIn dump's clock minus LSL's. Both are steady (LSL reads the
+        system's monotonic clock), so the difference holds; it is still
+        measured again every few seconds, between two readings of
+        brAIn dump's clock, to stay within a few microseconds."""
         import pylsl
         now = time.monotonic()
         if now - self._offset_at > CLOCK_EVERY_S:
-            before = time.time()
+            before = clock.now()
             lsl = pylsl.local_clock()
-            after = time.time()
+            after = clock.now()
             self._offset = (before + after) / 2 - lsl
             self._offset_at = now
         return self._offset

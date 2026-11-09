@@ -28,7 +28,8 @@ from .. import __version__
 from ..bids import NA, GzipTsvWriter, write_json
 from .push import PushSource
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
-                   RecordedFiles, RecordingTarget)
+                   RecordedFiles, RecordingTarget, Timeline,
+                   start_time)
 from .gp3_backends import (CHANNELS, DESCRIPTIONS, INDEX, RATE, UNITS,
                            Backend, CalibrationQuality, LocalBackend,
                            RemoteBackend, SimulatedBackend)
@@ -386,7 +387,7 @@ class GP3Device(Device):
             info = dict(backend.info) if backend else {}
             kind = backend.kind if backend else ""
 
-        def finalize(reference: Optional[float]) -> None:
+        def finalize(reference: Optional[Timeline]) -> None:
             self._write_sidecars(target, paths, first, last, samples, valid,
                                  screen, info, kind, reference)
 
@@ -412,8 +413,7 @@ class GP3Device(Device):
     def _write_sidecars(self, target, paths, first, last, samples, valid,
                         screen, info, kind, reference) -> None:
         cfg = self.config
-        start = (first - reference) if (first is not None and reference) \
-            else 0.0
+        start = start_time(reference, first)
         duration = (last - first) if (first is not None and last) else 0.0
         cal = self.calibrations[-1] if self.calibrations else \
             self.last_calibration

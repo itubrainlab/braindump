@@ -65,6 +65,17 @@ rest of brAIn dump does without it.
   physioevents and the run's events with `StimulusPresentation`), with each
   file's start time in `scans.tsv`.
 
+## Synchronisation
+
+Every device is time-stamped on one monotonic clock of the recording
+computer. The EEG's first-sample time and its real sampling rate are
+measured from every sample's acquisition time (`RecordingTiming` in
+`_eeg.json`), and event onsets and `StartTime`s are given in the EEG's own
+time through that rate, so they stay on the right EEG sample even as the
+headset's clock drifts. A test sends a UDP trigger (placed by g.Pype) and
+an LSL marker (placed by brAIn dump) at the same instant and checks they
+land on the same EEG sample.
+
 ## Devices by system
 
 | | Windows | macOS | Linux |

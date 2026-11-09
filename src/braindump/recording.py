@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Optional
 
 from .bids import NA, Dataset, Entities, write_json, write_tsv
-from .devices.base import Device, Event, RecordedFiles, RecordingTarget
+from . import clock
+from .devices.base import (Device, Event, RecordedFiles, RecordingTarget,
+                           Timeline)
 from .project import Project
 
 
@@ -115,7 +117,7 @@ class Session:
                         subject.head_circumference)
             except ValueError:
                 pass
-            target = RecordingTarget(self.dataset, e, datatype, time.time(),
+            target = RecordingTarget(self.dataset, e, datatype, clock.now(),
                                      self.project.power_line_frequency,
                                      common, eeg_meta)
             files: list[Path] = []
@@ -150,14 +152,16 @@ class Session:
                     ended.append((device, device.end_recording()))
                 except Exception as error:  # noqa: BLE001
                     problems.append(f"{device.NAME}: {error}")
-            # Every device's start time is given relative to the EEG's
-            # first sample (BIDS StartTime), or to the earliest one.
-            eeg = [r.first_sample for d, r in ended
-                   if d.MODALITY == "eeg" and r.first_sample]
+            # The recording's time base (BIDS StartTime, event onsets):
+            # the EEG's own, measured over the recording, or plain seconds
+            # from the earliest first sample.
+            eeg = [r.timeline for d, r in ended
+                   if d.MODALITY == "eeg" and r.timeline is not None]
             firsts = [r.first_sample for _, r in ended if r.first_sample]
-            reference = eeg[0] if eeg else (min(firsts) if firsts else None)
+            reference = eeg[0] if eeg else (Timeline(min(firsts))
+                                             if firsts else None)
             result = RecordingResult(target.entities, target.started,
-                                     time.time() - target.started,
+                                     clock.now() - target.started,
                                      problems=problems)
             scans = []
             for device, recorded in ended:
@@ -184,14 +188,16 @@ class Session:
             for folder in sorted(folders):
                 try:
                     result.files += self._write_events(
-                        target, folder, events, reference or target.started,
+                        target, folder, events,
+                        reference or Timeline(target.started),
                         has_eeg=bool(eeg) and folder == "eeg", extra=extra)
                 except Exception as error:  # noqa: BLE001
                     problems.append(f"events.tsv: {error}")
             self.dataset.add_participant(e.sub, {
                 "age": subject.age, "sex": subject.sex,
                 "handedness": subject.handedness})
-            moment = datetime.fromtimestamp(reference or target.started)
+            moment = datetime.fromtimestamp(reference.t0 if reference
+                                            else target.started)
             self.dataset.add_session(e, moment)
             self.dataset.add_scans(e, [s for s in scans if s[0].exists()])
             if subject.notes:
@@ -205,12 +211,10 @@ class Session:
             self.subject = self.target = None
             return result
 
-    #: The EEG's sampling rate, for events.tsv's sample column.
-    EEG_RATE = 250.0
 
     def _write_events(self, target: RecordingTarget, datatype: str,
                       events: list[Event],
-                      reference: float, has_eeg: bool,
+                      reference: Timeline, has_eeg: bool,
                       extra: dict) -> list[Path]:
         """The run's events.tsv: every device's events, with onsets from
         the reference device's first sample (the EEG's, when recorded)."""
@@ -221,18 +225,19 @@ class Session:
             columns.append("sample")
         rows = []
         for ev in sorted(events, key=lambda ev: ev.time):
-            onset = ev.time - reference
+            onset = reference.seconds(ev.time)
             row = [round(onset, 6), round(ev.duration, 6), ev.trial_type,
                    ev.value or NA, ev.source or NA]
             if has_eeg:
-                row.append(int(round(onset * self.EEG_RATE)))
+                row.append(reference.sample(ev.time))
             rows.append(row)
         write_tsv(path, columns, rows)
         sidecar = path.with_suffix(".json")
         meta = {
             "onset": {"Description": "Seconds from the first sample of the "
-                                     "recording (the EEG's, when EEG was "
-                                     "recorded)", "Units": "s"},
+                                     "recording, in the EEG's own time "
+                                     "(sample / SamplingFrequency) when EEG "
+                                     "was recorded", "Units": "s"},
             "duration": {"Description": "Duration of the event",
                          "Units": "s"},
             "trial_type": {"Description": "\"trigger\" for the EEG's "

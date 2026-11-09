@@ -14,13 +14,15 @@ from gpype.common.constants import Constants
 from pathlib import Path
 from rhinorecorder.nodes import GatedLogger
 
+from .. import clock
 from ..bids import GzipTsvWriter
 
 PORT_OUT = Constants.Defaults.PORT_OUT
 
 
 class PushSource(Source):
-    """Rows of ``[time.time(), *values]`` pushed by :meth:`push`.
+    """Rows of ``[clock time, *values]`` pushed by :meth:`push`
+    (:mod:`braindump.clock`).
 
     g.Pype carries float32, too coarse for clock times, so the first
     channel leaves as ``TIME``: seconds since :attr:`epoch` (the source's
@@ -35,7 +37,7 @@ class PushSource(Source):
         kwargs.setdefault("output_ports", [OPort.Configuration()])
         kwargs.setdefault("channel_count", len(self.labels))
         super().__init__(sampling_rate=self.rate, **kwargs)
-        self.epoch = time.time()
+        self.epoch = clock.now()
         self._pending: Optional[np.ndarray] = None
         self._push_lock = threading.Lock()
         self.samples = 0
@@ -50,7 +52,7 @@ class PushSource(Source):
         return out
 
     def start(self):
-        self.epoch = time.time()
+        self.epoch = clock.now()
         Source.start(self)
 
     def push(self, row) -> None:
@@ -68,15 +70,41 @@ class PushSource(Source):
 
 
 class ClockMap:
-    """Sensor time to this computer's time.time(): the smallest delay seen
-    lately is the best estimate of the offset."""
+    """A device's own time stamps onto brAIn dump's clock.
 
-    def __init__(self, window: int = 300):
-        self._offsets: deque[float] = deque(maxlen=window)
+    Each reading arrives some delay after it was stamped: never less than
+    the link's fastest, often more (Bluetooth bursts, scheduling). So the
+    smallest ``received - sensor`` seen is the best estimate of the
+    offset between the clocks, and it is taken over a window of
+    ``window_s`` seconds: long enough that every burst pattern has
+    delivered a fast reading, short enough to follow the slow drift
+    between the device's crystal and this computer's (tens of ppm: a few
+    milliseconds a minute).
+
+    What the data cannot tell is the link's minimum delay itself: the
+    fastest reading still arrived that long after it was taken. Give it
+    as ``latency_s`` when it is known (measured, or the manufacturer's
+    figure); otherwise samples are placed that much late."""
+
+    def __init__(self, window_s: float = 30.0, latency_s: float = 0.0):
+        self.window_s = window_s
+        self.latency_s = latency_s
+        #: (received, offset), offsets increasing: a sliding minimum.
+        self._window: deque[tuple[float, float]] = deque()
 
     def __call__(self, sensor: float, received: float) -> float:
-        self._offsets.append(received - sensor)
-        return sensor + min(self._offsets)
+        offset = received - sensor
+        window = self._window
+        while window and window[-1][1] >= offset:
+            window.pop()
+        window.append((received, offset))
+        while window[0][0] < received - self.window_s:
+            window.popleft()
+        return sensor + window[0][1] - self.latency_s
+
+    @property
+    def offset(self) -> Optional[float]:
+        return self._window[0][1] if self._window else None
 
 
 class PhysioLogger(GatedLogger):

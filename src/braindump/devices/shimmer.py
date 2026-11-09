@@ -33,10 +33,11 @@ import gpype as gp
 import numpy as np
 from rhinorecorder.nodes import SweepTap
 
-from .. import __version__
+from .. import __version__, clock
 from ..bids import NA, write_json
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
-                   RecordedFiles, RecordingTarget)
+                   RecordedFiles, RecordingTarget, Timeline,
+                   start_time)
 from .push import ClockMap, PhysioLogger, PushSource
 
 #: Sampling rates the unit can keep exactly (32768 Hz / an integer).
@@ -86,6 +87,10 @@ class TickClock:
 
 @dataclass
 class ShimmerConfig(DeviceConfig):
+    #: The Bluetooth link's minimum delay, in ms, taken off the time
+    #: stamps when known (0: samples are placed when the fastest reading
+    #: arrived).
+    latency_ms: float = 0.0
     #: Serial port of the paired unit; empty uses the first one whose name
     #: says Shimmer.
     port: str = ""
@@ -215,7 +220,7 @@ class _Link:
                         EChannelType.INTERNAL_ADC_13)
 
             def packet(p):
-                received = time.time()
+                received = clock.now()
                 try:
                     ticks = p[channels[0]]
                     gsr = p[channels[1]]
@@ -281,12 +286,12 @@ class _Simulated:
     def _run(self):
         rng = np.random.default_rng()
         rate = self.config.sampling_rate
-        t0 = time.time()
+        t0 = clock.now()
         n = 0
         responses = [t0 + 3.0]
         while self._running:
             time.sleep(0.05)
-            now = time.time()
+            now = clock.now()
             while (n + 1) / rate <= now - t0:
                 t = t0 + n / rate
                 if t > responses[-1] + 1:
@@ -380,7 +385,8 @@ class ShimmerDevice(Device):
                 p.add_error_handler(self._pipeline_failed)
                 p.start()
                 self.graph = graph
-                self._clock = ClockMap()
+                self._clock = ClockMap(
+                    latency_s=self.config.latency_ms / 1000.0)
                 self.latest = None
                 cls = _Simulated if self.simulated else _Link
                 link = cls(self.config, self._on_sample, self._fail)
@@ -463,7 +469,7 @@ class ShimmerDevice(Device):
             samples = logger.samples_written
             info = dict(self.link.info) if self.link else {}
 
-        def finalize(reference: Optional[float]) -> None:
+        def finalize(reference: Optional[Timeline]) -> None:
             self._write_sidecar(target, path, first, last, info, reference)
 
         sidecar = path.with_name(path.name.replace(".tsv.gz", ".json"))
@@ -477,8 +483,7 @@ class ShimmerDevice(Device):
         software = [f"brAIn dump {__version__}", f"g.Pype {gp.__version__}"]
         if info.get("firmware"):
             software.append(f"Shimmer firmware {info['firmware']}")
-        start = (first - reference) if (first is not None and reference) \
-            else 0.0
+        start = start_time(reference, first)
         columns = ["timestamp", "skin_conductance", "skin_resistance",
                    "gsr_range"]
         meta = {

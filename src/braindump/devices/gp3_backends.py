@@ -29,6 +29,9 @@ from opengp3.calibration import (API_DEFAULT_POINTS, NINE_POINTS,
                                  VALIDATION_POINTS, grid_points)
 from opengp3.lsl import CHANNELS as LSL_CHANNELS
 
+from .. import clock
+from .push import ClockMap
+
 #: Channel names, in row order after the capture time.
 CHANNELS = [name for name, _, _ in LSL_CHANNELS]
 UNITS = {name: unit for name, unit, _ in LSL_CHANNELS}
@@ -329,9 +332,9 @@ class SimulatedBackend(Backend):
 
     def _run(self):
         period = 1.0 / RATE
-        next_t = time.time()
+        next_t = clock.now()
         while self._running:
-            now = time.time()
+            now = clock.now()
             if now < next_t:
                 time.sleep(next_t - now)
                 continue
@@ -534,7 +537,9 @@ class LocalBackend(Backend):
 
     def _on_sample(self, s):
         from opengp3.lsl import sample_values
-        self.on_row(np.array([s.t, *sample_values(s, self.tracker)]))
+        # OpenGP3 stamps frames with time.time() as they are captured.
+        self.on_row(np.array([clock.from_wall(s.t),
+                              *sample_values(s, self.tracker)]))
 
     def eye_view(self) -> EyeView:
         tracker = self.tracker
@@ -717,13 +722,12 @@ class RemoteBackend(Backend):
         self._running = False
         self._send_lock = threading.Lock()
         self._waiting: dict[str, tuple[threading.Event, list]] = {}
-        self._offsets: list[float] = []
-        self._offset: Optional[float] = None
+        self._clock = ClockMap(window_s=30.0)
         self._view = EyeView()
         self._view_lock = threading.Lock()
         self._camera = CAMERA_SIZE
         self._cal_listeners: list[Callable[[str, dict], None]] = []
-        self._fps_n, self._fps_t, self.fps = 0, time.time(), 0.0
+        self._fps_n, self._fps_t, self.fps = 0, clock.now(), 0.0
         self.calibration_delay = 0.5
         self.calibration_timeout = 1.25
         self._calibrated: Optional[bool] = None
@@ -809,7 +813,7 @@ class RemoteBackend(Backend):
         pending = list(client.pending)
         client.pending.clear()
         for tag, attrs in pending:
-            self._handle(tag, attrs, time.time())
+            self._handle(tag, attrs, clock.now())
         while self._running:
             try:
                 tag, attrs = client._next()
@@ -821,7 +825,7 @@ class RemoteBackend(Backend):
                     self.on_error(f"Lost the connection to the GP3 server: "
                                   f"{error}")
                 return
-            self._handle(tag, attrs, time.time())
+            self._handle(tag, attrs, clock.now())
 
     def _handle(self, tag: str, a: dict, received: float):
         if tag == "REC":
@@ -863,10 +867,7 @@ class RemoteBackend(Backend):
         if server_time == server_time:
             # The smallest delay seen lately is the best estimate of the
             # offset between the clocks.
-            self._offsets.append(received - server_time)
-            self._offsets = self._offsets[-600:]
-            self._offset = min(self._offsets)
-            t = server_time + self._offset
+            t = self._clock(server_time, received)
         else:
             t = received
         v = np.zeros(len(CHANNELS))
