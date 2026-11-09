@@ -15,11 +15,11 @@ from braindump.project import Project
 from braindump.recording import Session, Subject
 
 
-def _record(project, devices, seconds=2.5, task="watch"):
+def _record(project, devices, seconds=2.5, task="watch", warmup=1.0):
     for d in devices:
         d.start()
     try:
-        time.sleep(1.0)
+        time.sleep(warmup)
         session = Session(project, devices)
         session.start(Subject(sub="01", task=task))
         time.sleep(seconds)
@@ -98,7 +98,10 @@ def test_obs_over_ndi(tmp_path):
         except ConnectionError as error:
             pytest.skip(f"NDI discovery does not work here: {error}")
         obs.stop()
-        result = _record(project, [obs], seconds=2.0, task="game")
+        # Recording starts as the stream connects, before its first frame
+        # has said its rate: the file must still get the stream's 25 fps.
+        result = _record(project, [obs], seconds=2.0, task="game",
+                         warmup=0.0)
     finally:
         running = False
         ndi.send_destroy(sender)

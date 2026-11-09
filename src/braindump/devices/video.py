@@ -295,8 +295,13 @@ class _Recording:
     """One recording's files, written on their own thread so a slow disk
     cannot hold up the frames."""
 
-    def __init__(self, video: Path, frames: Path, rate: float):
-        self.video, self.frames, self.rate = video, frames, rate
+    def __init__(self, video: Path, frames: Path, rate_of):
+        """``rate_of()`` gives the source's frame rate: read when the
+        first frame is written, as a stream says its rate only with its
+        frames."""
+        self.video, self.frames = video, frames
+        self.rate_of = rate_of
+        self.rate = float(rate_of())
         self.queue: queue.Queue = queue.Queue(maxsize=QUEUE_FRAMES)
         self.count = 0
         self.dropped = 0
@@ -324,6 +329,7 @@ class _Recording:
                     break
                 image = frame.image
                 if writer is None:
+                    self.rate = float(self.rate_of())
                     h, w = image.shape[:2]
                     self.size = (w, h)
                     self.video.parent.mkdir(parents=True, exist_ok=True)
@@ -481,7 +487,8 @@ class VideoDevice(Device):
             video, frames = self.paths(target)
             self._record_from = target.started
             self._target = target
-            self._recording = _Recording(video, frames, self.source.rate)
+            source = self.source
+            self._recording = _Recording(video, frames, lambda: source.rate)
             return [video, frames]
 
     def end_recording(self) -> RecordedFiles:
