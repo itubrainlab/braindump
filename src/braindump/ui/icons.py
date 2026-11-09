@@ -44,6 +44,24 @@ def wave(color: str = theme.ICON) -> QIcon:
     return _icon(draw, color)
 
 
+def heart(color: str = theme.ICON) -> QIcon:
+    def draw(p, c, s):
+        p.setPen(QPen(c, s * 0.08, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        path = QPainterPath()
+        path.moveTo(s * 0.5, s * 0.84)
+        path.cubicTo(s * 0.12, s * 0.58, s * 0.04, s * 0.36, s * 0.16,
+                     s * 0.22)
+        path.cubicTo(s * 0.28, s * 0.08, s * 0.46, s * 0.14, s * 0.5,
+                     s * 0.3)
+        path.cubicTo(s * 0.54, s * 0.14, s * 0.72, s * 0.08, s * 0.84,
+                     s * 0.22)
+        path.cubicTo(s * 0.96, s * 0.36, s * 0.88, s * 0.58, s * 0.5,
+                     s * 0.84)
+        p.drawPath(path)
+    return _icon(draw, color)
+
+
 def plus(color: str = theme.ICON) -> QIcon:
     def draw(p, c, s):
         p.setPen(QPen(c, s * 0.1, Qt.PenStyle.SolidLine,
@@ -111,6 +129,8 @@ def device(device_type: str, color: str = theme.ICON) -> QIcon:
         return eye(color)
     if device_type == "lsl":
         return network(color)
+    if device_type == "polar":
+        return heart(color)
     return wave(color)
 
 

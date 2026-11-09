@@ -24,6 +24,10 @@ python -m venv .venv && .venv/bin/pip install -e ".[test]"
   distance feedback, calibration (5/9/13/16/25 points, full-screen targets
   here or on the tracker computer), validation (local), and a plot of the
   calibration quality.
+- **Polar H10** (Bluetooth LE, via bleak): the raw ECG at 130 Hz, optionally
+  the accelerometer, and the heart rate with every RR interval. BIDS physio
+  `recording-ecg` (`cardiac`, µV) and `recording-accel`, with each beat in
+  `recording-ecg_physioevents`.
 - **LSL streams**: any Lab Streaming Layer streams, picked by name, type or
   source id (or from a list of the streams on the network), found whenever
   they appear. Every sample they send while recording becomes an event

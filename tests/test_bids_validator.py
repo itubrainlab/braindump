@@ -25,8 +25,8 @@ VALIDATOR = (os.environ.get("BIDS_VALIDATOR")
 def test_recorded_dataset_is_valid(tmp_path):
     project = Project.create(tmp_path / "p", "Validation",
                              authors=["A. Author", "B. Author"])
-    for kind in ("unicorn", "gp3", "lsl"):
-        project.add_device(kind, {"simulate": True})
+    for kind in ("unicorn", "gp3", "lsl", "polar"):
+        project.add_device(kind, {"simulate": True, "accelerometer": True})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
     for d in devices:
@@ -46,7 +46,7 @@ def test_recorded_dataset_is_valid(tmp_path):
                               head_circumference="56"))
         time.sleep(2.5)
         assert not session.stop().problems
-        devices[0].stop()  # eye tracking alone: beh/
+        devices[0].stop()  # without EEG: beh/
         session = Session(project, [d for d in devices if d.running])
         session.start(Subject(sub="02", task="free", run=1))
         time.sleep(1.5)

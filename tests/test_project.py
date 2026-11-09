@@ -49,6 +49,6 @@ def test_recent_projects(tmp_path):
 
 
 def test_registry():
-    assert set(DEVICE_TYPES) == {"unicorn", "gp3", "lsl"}
+    assert set(DEVICE_TYPES) == {"unicorn", "gp3", "lsl", "polar"}
     saved = json.loads(json.dumps(UnicornConfig().to_dict()))
     assert UnicornConfig.from_dict(saved) == UnicornConfig()

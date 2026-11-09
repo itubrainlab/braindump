@@ -191,6 +191,9 @@ Recorded with {APP_NAME} {__version__}
   left and right eye, as BIDS physio with `PhysioType` `eyetrack`; fixations
   and blinks in `_physioevents.tsv.gz`. `recording-gaze` holds every
   channel the tracker reports.
+- `*_recording-ecg_physio.tsv.gz`: ECG from a Polar H10 chest strap
+  (`cardiac`, µV, 130 Hz), with each heart beat and its RR interval in
+  `_physioevents.tsv.gz`; `recording-accel`: the strap's acceleration.
 - `*_events.tsv`: the EEG's triggers and the samples of the recorded Lab
   Streaming Layer streams (`trial_type` is the stream's name).
 - Eye tracking without EEG goes under `beh/`.

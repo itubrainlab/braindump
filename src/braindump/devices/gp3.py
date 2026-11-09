@@ -19,14 +19,13 @@ from typing import Optional
 
 import gpype as gp
 import numpy as np
-from gpype.backend.core.o_port import OPort
-from gpype.backend.sources.base.source import Source
 from gpype.common.constants import Constants
 from rhinorecorder.nodes import GatedLogger, SweepTap
 from rhinorecorder.recorder import GATE_MARGIN
 
 from .. import __version__
 from ..bids import NA, GzipTsvWriter, write_json
+from .push import PushSource
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget)
 from .gp3_backends import (CHANNELS, DESCRIPTIONS, INDEX, RATE, UNITS,
@@ -82,50 +81,13 @@ class GP3Config(DeviceConfig):
     last_validation: dict = field(default_factory=dict)
 
 
-class GazeSource(Source):
-    """A g.Pype source fed by a GP3 backend: one row per camera frame,
-    pushed from the backend's thread, as g.Pype's own LslReceiver does.
-
-    g.Pype carries float32, too coarse for clock times, so the first
-    channel is seconds since :attr:`epoch` (the source's start)."""
+class GazeSource(PushSource):
+    """The GP3's samples, pushed by its backend: one row per camera
+    frame."""
 
     def __init__(self, **kwargs):
-        kwargs.setdefault("frame_size", 1)
-        kwargs.setdefault("output_ports", [OPort.Configuration()])
-        kwargs.setdefault("channel_count", len(PIPELINE_CHANNELS))
-        super().__init__(sampling_rate=RATE, **kwargs)
-        self.epoch = time.time()
-        self._pending: Optional[np.ndarray] = None
-        self._push_lock = threading.Lock()
-        self.samples = 0
-
-    def setup(self, data, port_context_in):
-        out = super().setup(data, port_context_in)
-        ctx = out[PORT_OUT]
-        ctx[Constants.Keys.SAMPLING_RATE] = RATE
-        ctx[Constants.Keys.FRAME_RATE] = RATE
-        ctx[Constants.Keys.CHANNEL_LABELS] = list(PIPELINE_CHANNELS)
-        ctx[Constants.Keys.CHANNEL_UNITS] = ["s"] + [UNITS[c] for c in
-                                                     CHANNELS]
-        return out
-
-    def start(self):
-        self.epoch = time.time()
-        Source.start(self)
-
-    def push(self, row: np.ndarray) -> None:
-        """One backend row: capture time (time.time()), then CHANNELS."""
-        values = np.empty((1, len(PIPELINE_CHANNELS)))
-        values[0, 0] = row[0] - self.epoch
-        values[0, 1:] = row[1:]
-        with self._push_lock:
-            self._pending = values
-            self.samples += 1
-            self.cycle()
-
-    def step(self, data):
-        pending, self._pending = self._pending, None
-        return None if pending is None else {PORT_OUT: pending}
+        super().__init__(CHANNELS, [UNITS[c] for c in CHANNELS], RATE,
+                         **kwargs)
 
 
 # -- BIDS ----------------------------------------------------------------------------

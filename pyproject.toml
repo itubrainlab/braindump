@@ -22,6 +22,8 @@ dependencies = [
     "PySide6>=6.10.1,<6.12",
     "pyqtgraph>=0.13.3",
     "opencv-python>=4.8",
+    # Bluetooth Low Energy, for the Polar H10.
+    "bleak>=0.22",
 ]
 keywords = ["eeg", "eye tracking", "bids", "unicorn", "gazepoint", "gp3", "gpype", "recorder"]
 classifiers = [
