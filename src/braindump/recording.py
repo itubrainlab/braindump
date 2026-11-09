@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -123,8 +123,17 @@ class Session:
             files: list[Path] = []
             started: list[Device] = []
             try:
+                # Two EEG amplifiers at once would write the same
+                # _eeg.bdf: each gets its own acq- entity (acq-unicorn,
+                # acq-hiamp), as BIDS has it for one modality recorded
+                # two ways.
+                several = sum(1 for d in devices if d.MODALITY == "eeg") > 1
                 for device in devices:
-                    files += device.begin_recording(target)
+                    own = target
+                    if several and device.MODALITY == "eeg":
+                        own = replace(target, entities=replace(
+                            e, acq=device.TYPE))
+                    files += device.begin_recording(own)
                     started.append(device)
             except BaseException:
                 for device in started:

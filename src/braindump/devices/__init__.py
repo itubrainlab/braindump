@@ -5,6 +5,7 @@ from pathlib import Path
 
 from .base import Device, DeviceConfig
 from .gp3 import GP3Device
+from .hiamp import HIampDevice
 from .lsl import LslDevice
 from .polar import PolarDevice
 from .shimmer import ShimmerDevice
@@ -13,6 +14,7 @@ from .unicorn import UnicornDevice
 #: Supported devices, in the order the device column lists them.
 DEVICE_TYPES: dict[str, type[Device]] = {
     UnicornDevice.TYPE: UnicornDevice,
+    HIampDevice.TYPE: HIampDevice,
     GP3Device.TYPE: GP3Device,
     PolarDevice.TYPE: PolarDevice,
     ShimmerDevice.TYPE: ShimmerDevice,

@@ -21,6 +21,7 @@ from .device_column import PROJECT, DeviceColumn
 from .device_page import DevicePage
 from .forms import Relay, divider, tool
 from .gp3_page import GP3Page
+from .hiamp_page import HIampPage
 from .lsl_page import LslPage
 from .polar_page import PolarPage
 from .shimmer_page import ShimmerPage
@@ -208,7 +209,8 @@ class MainWindow(QMainWindow):
         device.on_state = lambda state, k=key: self.relay.state.emit(k, state)
         device.on_error = lambda message, k=key: self.relay.error.emit(
             k, message)
-        page_cls = {"unicorn": UnicornPage, "gp3": GP3Page,
+        page_cls = {"unicorn": UnicornPage, "hiamp": HIampPage,
+                    "gp3": GP3Page,
                     "lsl": LslPage, "polar": PolarPage,
                     "shimmer": ShimmerPage}[key]
         page = page_cls(device)

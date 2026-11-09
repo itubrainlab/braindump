@@ -25,7 +25,7 @@ import gpype as gp
 import numpy as np
 from gpype.common.constants import Constants
 from rhinorecorder import layout, presets
-from rhinorecorder.nodes import BdfLogger, EegFilter, SweepTap, UnicornLayout
+from rhinorecorder.nodes import EegFilter, SweepTap, UnicornLayout
 from rhinorecorder.recorder import GATE_MARGIN
 from rhinorecorder.settings import trigger_bind_address
 from rhinorecorder.sources import HeadsetSource, SimulatedSource
@@ -34,6 +34,7 @@ from .. import __version__, clock
 from ..bids import NA, write_json, write_tsv
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    Event, RecordedFiles, RecordingTarget, Timeline)
+from .eeg import BidsBdfLogger, TimingFit, fit_timing  # noqa: F401
 
 #: The Unicorn's default electrode positions (10-20 system).
 DEFAULT_ELECTRODES = ["Fz", "C3", "Cz", "C4", "Pz", "PO7", "Oz", "PO8"]
@@ -97,11 +98,6 @@ class UnicornConfig(DeviceConfig):
 
 #: Column of the sample counter in the headset's scan.
 SCAN_COUNTER = 15
-#: Shortest recording, in seconds, whose rate is measured rather than
-#: taken as nominal.
-MIN_FIT_S = 2.0
-
-
 class _Stamped:
     """Keeps every scan's acquisition time, on brAIn dump's clock.
 
@@ -145,93 +141,6 @@ class _Stamped:
         with self._stamps_lock:
             return (np.frombuffer(self.acquired, dtype=float).copy(),
                     np.frombuffer(self.counters, dtype=float).copy())
-
-
-@dataclass
-class TimingFit:
-    timeline: Timeline
-    #: Spread of the acquisition stamps around the fitted line, in s.
-    residual_sd: float = 0.0
-    residual_max: float = 0.0
-    method: str = "fit"
-
-
-def fit_timing(acquired: np.ndarray, nominal: float) -> TimingFit:
-    """When sample 0 was acquired, and the rate the samples really came
-    at, from every sample's acquisition stamp: a straight line through
-    them (refitted without stamps more than 3 SD off, as a delayed burst
-    can be). Short recordings, or a rate more than 1 % off nominal (stamps
-    that cannot be right), keep the nominal rate."""
-    n = len(acquired)
-    k = np.arange(n, dtype=float)
-    if n < 2:
-        t0 = float(acquired[0]) if n else 0.0
-        return TimingFit(Timeline(t0, nominal, nominal), method="nominal")
-    if n >= MIN_FIT_S * nominal:
-        slope, intercept = np.polyfit(k, acquired, 1)
-        res = acquired - (intercept + slope * k)
-        keep = np.abs(res) <= max(3 * res.std(), 0.002)
-        if keep.sum() > n // 2:
-            slope, intercept = np.polyfit(k[keep], acquired[keep], 1)
-        rate = 1.0 / slope if slope > 0 else nominal
-        if abs(rate / nominal - 1) <= 0.01:
-            res = acquired - (intercept + slope * k)
-            return TimingFit(Timeline(float(intercept), float(rate),
-                                      nominal),
-                             float(res.std()), float(np.abs(res).max()))
-    # The nominal rate, placed where the stamps are (their median).
-    t0 = float(np.median(acquired - k / nominal))
-    res = acquired - (t0 + k / nominal)
-    return TimingFit(Timeline(t0, nominal, nominal), float(res.std()),
-                     float(np.abs(res).max()), "nominal")
-
-
-class BidsBdfLogger(BdfLogger):
-    """Rhino Recorder's BDF+ logger, with the electrodes named as the
-    project says, and keeping what BIDS needs beside the file: which
-    sample it started at (and that sample's counter), and the trigger
-    events."""
-
-    def __init__(self, electrodes: list[str], latency_ms: float = 40.0,
-                 **kwargs):
-        super().__init__(**kwargs)
-        self.electrodes = electrodes
-        self.latency_s = latency_ms / 1000.0
-        #: A fallback first-sample time, from when it arrived.
-        self.first_arrival: Optional[float] = None
-        #: Pipeline index and counter of the first sample written.
-        self.start_index: Optional[int] = None
-        self.first_counter: Optional[float] = None
-        self.events: list[tuple[float, int, float]] = []
-
-    def setup(self, data, port_context_in):
-        out = super().setup(data, port_context_in)
-        names = dict(zip([f"EEG {i + 1}" for i in range(layout.NUM_EEG)],
-                         self.electrodes))
-        self.labels = [names.get(label, label) for label in self.labels]
-        return out
-
-    def _open_file(self, path):
-        self.first_arrival = None
-        self.start_index = self.first_counter = None
-        self.events = []
-        super()._open_file(path)
-
-    def _write(self, block):
-        if self.first_arrival is None:
-            # The newest of these rows has just arrived; it was acquired
-            # the link's delay before.
-            self.first_arrival = (clock.now() - self.latency_s
-                                  - (block.shape[0] - 1) / self.sampling_rate)
-            self.start_index = self._start_at
-            if "CNT" in self.labels:
-                self.first_counter = float(block[0, self.labels.index("CNT")])
-        if self._status is not None:
-            for row in np.flatnonzero(block[:, self._status]):
-                sample = self.samples_written + int(row)
-                self.events.append((sample / self.sampling_rate, sample,
-                                    float(block[row, self._status])))
-        super()._write(block)
 
 
 class StampedHeadsetSource(_Stamped, HeadsetSource):
@@ -507,25 +416,9 @@ class UnicornDevice(Device):
             "TestSignal": cfg.test_signal,
             **target.common_metadata,
             **target.eeg_metadata,
-            "RecordingTiming": {
-                "Description": "When the first sample was acquired, on the "
-                               "recording computer's clock, and the rate "
-                               "the samples really came at by that clock "
-                               "(fitted to every sample's acquisition time, "
-                               "corrected for Bluetooth bursts and a "
-                               f"{cfg.latency_ms:g} ms link delay). Event "
-                               "onsets and the other recordings' StartTime "
-                               "are in this file's time: sample / "
-                               "SamplingFrequency.",
-                "FirstSampleTime": datetime.fromtimestamp(
-                    timing.timeline.t0).isoformat(timespec="microseconds"),
-                "MeasuredSamplingFrequency": round(timing.timeline.rate, 6),
-                "ClockDeviationPPM": round(
-                    (timing.timeline.rate / fs - 1) * 1e6, 1),
-                "TimestampResidualSD": round(timing.residual_sd, 6),
-                "TimestampResidualMax": round(timing.residual_max, 6),
-                "Method": timing.method,
-            },
+            "RecordingTiming": timing.metadata(
+                "corrected for Bluetooth bursts and a "
+                f"{cfg.latency_ms:g} ms link delay"),
         })
         rows = []
         for label, (kind, unit) in zip(labels, kinds):

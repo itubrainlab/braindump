@@ -5,6 +5,8 @@ Windows, macOS and Linux:
 
 - **g.tec Unicorn Hybrid Black**: EEG, through [g.Pype](https://gpype.gtec.at)
   and [Rhino Recorder](https://github.com/itubrainlab/rhinorecorder)'s nodes;
+- **g.tec g.HIamp**: high-density EEG (up to 256 channels, 256–4800 Hz),
+  through g.Pype's GHIamp source and g.tec's gtec-gds driver;
 - **Gazepoint GP3**: eye tracking, through
   [OpenGP3](https://github.com/itubrainlab/opengp3), on this computer or on
   another one over the Open Gaze API;
@@ -81,6 +83,7 @@ land on the same EEG sample.
 | | Windows | macOS | Linux |
 |---|---|---|---|
 | Unicorn | pair it first | found over Bluetooth | found over Bluetooth |
+| g.HIamp | USB, gtec-gds driver | USB, gtec-gds driver | USB, gtec-gds driver |
 | GP3, this computer | WinUSB driver via [Zadig](https://zadig.akeo.ie) once | nothing | a USB rule, installed once (asks for the password) |
 | GP3, remote | nothing | nothing | nothing |
 | Polar H10 | Bluetooth LE | Bluetooth LE | Bluetooth LE (BlueZ) |

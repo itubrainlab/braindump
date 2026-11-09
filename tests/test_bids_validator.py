@@ -25,7 +25,7 @@ VALIDATOR = (os.environ.get("BIDS_VALIDATOR")
 def test_recorded_dataset_is_valid(tmp_path):
     project = Project.create(tmp_path / "p", "Validation",
                              authors=["A. Author", "B. Author"])
-    for kind in ("unicorn", "gp3", "lsl", "polar", "shimmer"):
+    for kind in ("unicorn", "hiamp", "gp3", "lsl", "polar", "shimmer"):
         project.add_device(kind, {"simulate": True, "accelerometer": True})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
@@ -33,7 +33,7 @@ def test_recorded_dataset_is_valid(tmp_path):
         d.start()
     try:
         time.sleep(2.5)  # the LSL test stream is found and sends
-        gp3 = devices[1]
+        gp3 = next(d for d in devices if d.TYPE == "gp3")
         run = gp3.backend.calibrate(5)
         run.delay = run.timeout = 0.02
         while not run.tick():
@@ -46,7 +46,9 @@ def test_recorded_dataset_is_valid(tmp_path):
                               head_circumference="56"))
         time.sleep(2.5)
         assert not session.stop().problems
-        devices[0].stop()  # without EEG: beh/
+        for d in devices:  # without EEG: beh/
+            if d.MODALITY == "eeg":
+                d.stop()
         session = Session(project, [d for d in devices if d.running])
         session.start(Subject(sub="02", task="free", run=1))
         time.sleep(1.5)

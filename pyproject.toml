@@ -22,6 +22,8 @@ dependencies = [
     "PySide6>=6.10.1,<6.12",
     "pyqtgraph>=0.13.3",
     "opencv-python>=4.8",
+    # g.tec's driver for the g.HIamp (g.Pype's "devices" extra).
+    "gtec-gds>=1.7.3",
     # Bluetooth Low Energy, for the Polar H10.
     "bleak>=0.22",
     # Serial ports, for the Shimmer.
