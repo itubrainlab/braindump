@@ -83,9 +83,12 @@ finally:
         d.stop()
 assert not result.problems, result.problems
 subject = project.output_path / "sub-01"
-expected = ["eeg/eeg.bdf", "eeg/events.tsv", "eeg/recording-ecg_physio.tsv.gz",
+# Two EEG amplifiers (the Unicorn and the g.HIamp): each its own acq-.
+expected = ["eeg/acq-unicorn_eeg.bdf", "eeg/acq-hiamp_eeg.bdf",
+            "eeg/events.tsv", "eeg/recording-ecg_physio.tsv.gz",
             "eeg/recording-gsr_physio.tsv.gz",
-            "beh/recording-eye1_physio.tsv.gz", "beh/events.tsv"]
+            "beh/recording-eye1_physio.tsv.gz", "beh/events.tsv",
+            "beh/recording-webcam_video.mp4", "beh/recording-obs_video.mp4"]
 for item in expected:
     folder, suffix = item.split("/")
     path = subject / folder / f"sub-01_task-smoke_{suffix}"
