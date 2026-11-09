@@ -166,9 +166,9 @@ class MainWindow(QMainWindow):
         row.addSpacing(12)
         row.addWidget(divider())
         row.addSpacing(8)
-        self.connect_button = tool(icons.play(), "Connect every device")
+        self.connect_button = tool(icons.connect(), "Connect every device")
         self.connect_button.clicked.connect(self.connect_all)
-        self.stop_button = tool(icons.stop(), "Stop recording and "
+        self.stop_button = tool(icons.disconnect(), "Stop recording and "
                                 "disconnect every device")
         self.stop_button.clicked.connect(self._stop_clicked)
         self.record_button = tool(icons.record(theme.RECORDING),

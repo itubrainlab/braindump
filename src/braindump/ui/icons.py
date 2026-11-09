@@ -11,7 +11,7 @@ from . import theme
 
 __all__ = ["battery", "gear", "play", "question", "record", "stop", "wifi",
            "eye", "wave", "plus", "cross", "folder", "app", "dot",
-           "target", "check"]
+           "target", "check", "connect", "disconnect"]
 
 
 def app() -> QIcon:
@@ -79,6 +79,47 @@ def hand(color: str = theme.ICON) -> QIcon:
         p.drawLine(QPointF(s * 0.44, s * 0.5), QPointF(s * 0.52, s * 0.76))
         p.drawLine(QPointF(s * 0.52, s * 0.76), QPointF(s * 0.6, s * 0.64))
         p.drawLine(QPointF(s * 0.6, s * 0.64), QPointF(s * 0.7, s * 0.64))
+    return _icon(draw, color)
+
+
+def _plug(p, c, s, gap: float) -> None:
+    """A plug (left, prongs out) and its socket (right), ``gap`` apart
+    (a fraction of the icon): 0 is plugged in."""
+    shift = gap / 2
+    p.setPen(QPen(c, s * 0.09, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.setBrush(c)
+    # Plug: cable, solid body, two prongs.
+    right = 0.44 - shift
+    p.drawLine(QPointF(s * 0.04, s * 0.5), QPointF(s * (right - 0.2), s * 0.5))
+    p.drawRoundedRect(QRectF(s * (right - 0.2), s * 0.24, s * 0.2, s * 0.52),
+                      s * 0.06, s * 0.06)
+    p.setPen(QPen(c, s * 0.08, Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+    for y in (0.38, 0.62):
+        p.drawLine(QPointF(s * right, s * y), QPointF(s * (right + 0.12), s * y))
+    # Socket: solid body (the prongs disappear into it), cable.
+    left = 0.56 + shift
+    p.setPen(QPen(c, s * 0.09, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.drawRoundedRect(QRectF(s * left, s * 0.24, s * 0.2, s * 0.52),
+                      s * 0.06, s * 0.06)
+    p.drawLine(QPointF(s * (left + 0.2), s * 0.5), QPointF(s * 0.96, s * 0.5))
+
+
+def connect(color: str = theme.ICON) -> QIcon:
+    """Connect: the plug in its socket."""
+    def draw(p, c, s):
+        _plug(p, c, s, 0.06)
+    return _icon(draw, color)
+
+
+def disconnect(color: str = theme.ICON) -> QIcon:
+    """Disconnect: plug and socket pulled apart, with a break between."""
+    def draw(p, c, s):
+        _plug(p, c, s, 0.22)
+        p.setPen(QPen(c, s * 0.07, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap))
+        for (x0, y0), (x1, y1) in (((0.55, 0.04), (0.5, 0.15)),
+                                   ((0.45, 0.96), (0.5, 0.85))):
+            p.drawLine(QPointF(s * x0, s * y0), QPointF(s * x1, s * y1))
     return _icon(draw, color)
 
 
