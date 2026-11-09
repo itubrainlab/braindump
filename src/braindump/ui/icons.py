@@ -123,6 +123,23 @@ def disconnect(color: str = theme.ICON) -> QIcon:
     return _icon(draw, color)
 
 
+def camera(color: str = theme.ICON) -> QIcon:
+    """A video camera."""
+    def draw(p, c, s):
+        p.setPen(QPen(c, s * 0.08, Qt.PenStyle.SolidLine,
+                      Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(QRectF(s * 0.08, s * 0.28, s * 0.58, s * 0.44),
+                          s * 0.07, s * 0.07)
+        path = QPainterPath()
+        path.moveTo(s * 0.66, s * 0.44)
+        path.lineTo(s * 0.92, s * 0.3)
+        path.lineTo(s * 0.92, s * 0.7)
+        path.lineTo(s * 0.66, s * 0.56)
+        p.drawPath(path)
+    return _icon(draw, color)
+
+
 def plus(color: str = theme.ICON) -> QIcon:
     def draw(p, c, s):
         p.setPen(QPen(c, s * 0.1, Qt.PenStyle.SolidLine,
@@ -194,6 +211,8 @@ def device(device_type: str, color: str = theme.ICON) -> QIcon:
         return heart(color)
     if device_type == "shimmer":
         return hand(color)
+    if device_type in ("webcam", "obs"):
+        return camera(color)
     return wave(color)
 
 

@@ -192,7 +192,7 @@ class Session:
             folders = set()
             if events or eeg or extra:
                 folders.add(target.datatype)
-            if any(d.MODALITY == "eyetrack" for d, _ in ended):
+            if any(d.MODALITY in ("eyetrack", "video") for d, _ in ended):
                 folders.add("beh")
             for folder in sorted(folders):
                 try:

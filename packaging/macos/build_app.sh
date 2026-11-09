@@ -72,6 +72,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.education</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSCameraUsageDescription</key>
+    <string>brAIn dump records video from the webcam.</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>brAIn dump reads the Unicorn EEG headset, the Polar H10 and the Shimmer over Bluetooth.</string>
     <key>NSLocalNetworkUsageDescription</key>

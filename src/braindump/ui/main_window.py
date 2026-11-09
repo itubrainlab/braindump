@@ -28,6 +28,7 @@ from .shimmer_page import ShimmerPage
 from .project_page import ProjectPage
 from .record_dialog import RecordDialog
 from .unicorn_page import UnicornPage
+from .video_page import VideoPage
 
 VIEW_INTERVAL_MS = 40
 STATUS_INTERVAL_MS = 500
@@ -212,7 +213,8 @@ class MainWindow(QMainWindow):
         page_cls = {"unicorn": UnicornPage, "hiamp": HIampPage,
                     "gp3": GP3Page,
                     "lsl": LslPage, "polar": PolarPage,
-                    "shimmer": ShimmerPage}[key]
+                    "shimmer": ShimmerPage, "webcam": VideoPage,
+                    "obs": VideoPage}[key]
         page = page_cls(device)
         page.config_changed.connect(lambda k=key: self._save_config(k))
         page.connect_requested.connect(

@@ -12,7 +12,15 @@ Windows, macOS and Linux:
   another one over the Open Gaze API;
 - **Polar H10**: ECG, heart rate and RR intervals;
 - **Shimmer3 GSR+**: skin conductance and pulse (PPG);
-- **LSL streams**: markers from any Lab Streaming Layer stream, as events.
+- **LSL streams**: markers from any Lab Streaming Layer stream, as events;
+- **Webcam**: any camera on the computer, as video;
+- **OBS (NDI)**: OBS's output over NDI (DistroAV plugin), low latency, from
+  this or another computer, as video.
+
+Video is stored as BIDS behavioural video, following the BEP047 proposal
+(`beh/…_recording-<label>_video.mp4` and its sidecar, listed in
+`.bidsignore` until BEP047 is released), with every frame's time in a
+`…_recording-<label>_physio.tsv.gz` beside it.
 
 ## Download
 
@@ -89,6 +97,8 @@ land on the same EEG sample.
 | Polar H10 | Bluetooth LE | Bluetooth LE | Bluetooth LE (BlueZ) |
 | Shimmer3 GSR+ | pair it; its outgoing COM port | pair it; `/dev/cu.Shimmer3-…` | pair it and `rfcomm bind`; `/dev/rfcomm0` |
 | LSL | nothing | nothing | nothing |
+| Webcam | nothing | camera access, asked once | nothing (V4L2) |
+| OBS over NDI | DistroAV plugin in OBS | DistroAV plugin in OBS | DistroAV plugin in OBS |
 
 g.tec's Unicorn driver has builds for Windows x64, Linux x86_64 and Apple
 Silicon Macs only.

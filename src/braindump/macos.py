@@ -26,6 +26,8 @@ _INFO = {
     "CFBundlePackageType": "APPL",
     "LSUIElement": False,
     "NSHighResolutionCapable": True,
+    "NSCameraUsageDescription":
+        "brAIn dump records video from the webcam.",
     "NSBluetoothAlwaysUsageDescription":
         "brAIn dump reads the Unicorn EEG headset over Bluetooth.",
     "NSLocalNetworkUsageDescription":

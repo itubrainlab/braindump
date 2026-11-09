@@ -35,7 +35,8 @@ for name, check in (
         ("bleak", lambda m: "ok"),
         ("serial", lambda m: m.__version__),
         ("pyshimmer", lambda m: "ok"),
-        ("cv2", lambda m: m.__version__)):
+        ("cv2", lambda m: m.__version__),
+        ("NDIlib", lambda m: "ok" if m.initialize() else "no NDI")):
     try:
         module = __import__(name)
         drivers[name] = check(module)

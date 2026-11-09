@@ -26,6 +26,8 @@ dependencies = [
     "gtec-gds>=1.7.3",
     # Bluetooth Low Energy, for the Polar H10.
     "bleak>=0.22",
+    # NDI, for OBS's low-latency video output (MIT; carries NDI's runtime).
+    "ndi-python>=6.0",
     # Serial ports, for the Shimmer.
     "pyserial>=3.5",
 ]

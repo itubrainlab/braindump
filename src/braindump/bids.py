@@ -42,6 +42,11 @@ from typing import Iterable, Optional, Sequence
 from . import APP_NAME, __version__
 
 BIDS_VERSION = "1.10.0"
+#: Files the released specification does not know yet, for .bidsignore:
+#: behavioural video, as BIDS BEP047 proposes
+#: (https://bids.neuroimaging.io/extensions/beps/bep_047.html).
+BIDSIGNORE = ("# BEP047 behavioural video (not yet in the BIDS release)",
+              "*_video.mp4", "*_video.json")
 NA = "n/a"
 
 _LABEL = re.compile(r"[^A-Za-z0-9]")
@@ -162,6 +167,7 @@ class Dataset:
                    ("README", "README.md", "README.txt", "README.rst")):
             (self.root / "README.md").write_text(self.readme(),
                                                  encoding="utf-8")
+        self.ignore(BIDSIGNORE)
         sidecar = self.root / "participants.json"
         if not sidecar.exists():
             write_json(sidecar, {
@@ -225,6 +231,18 @@ the microsecond.
   their own clocks and moved onto the computer's by the smallest delay
   seen over 30 s; LSL samples by LSL's own clock correction.
 """
+
+    def ignore(self, patterns: Sequence[str]) -> None:
+        """Make sure ``.bidsignore`` lists ``patterns``."""
+        path = self.root / ".bidsignore"
+        lines = path.read_text(encoding="utf-8").splitlines() \
+            if path.exists() else []
+        missing = [p for p in patterns if p not in lines]
+        if missing:
+            with open(path, "a", encoding="utf-8") as f:
+                if lines and lines[-1] != "":
+                    f.write("\n")
+                f.write("\n".join(missing) + "\n")
 
     def add_participant(self, sub: str, info: Optional[dict] = None) -> None:
         """Add ``sub-<sub>`` to participants.tsv, or fill in its blanks."""

@@ -10,6 +10,7 @@ from .lsl import LslDevice
 from .polar import PolarDevice
 from .shimmer import ShimmerDevice
 from .unicorn import UnicornDevice
+from .video import ObsDevice, WebcamDevice
 
 #: Supported devices, in the order the device column lists them.
 DEVICE_TYPES: dict[str, type[Device]] = {
@@ -19,6 +20,8 @@ DEVICE_TYPES: dict[str, type[Device]] = {
     PolarDevice.TYPE: PolarDevice,
     ShimmerDevice.TYPE: ShimmerDevice,
     LslDevice.TYPE: LslDevice,
+    WebcamDevice.TYPE: WebcamDevice,
+    ObsDevice.TYPE: ObsDevice,
 }
 
 
