@@ -604,7 +604,8 @@ class WebcamDevice(VideoDevice):
 
 @dataclass
 class ObsConfig(VideoConfig):
-    label: str = "obs"
+    #: OBS usually captures the screen (the stimulus, the game).
+    label: str = "screen"
     #: The NDI source's name, or part of it (e.g. "OBS"); empty takes the
     #: first source whose name says OBS.
     source: str = ""
