@@ -4,6 +4,7 @@ whose properties are known: it passes a good one, and catches each fault.
 import gzip
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -59,7 +60,8 @@ def procedure(rng, rest=10.0, trials=20):
 
 
 def make_dataset(root: Path, *, alpha=True, n170=True, gaze_offset=0.0,
-                 marker_shift=0.0, seed=3):
+                 marker_shift=0.0, video_delay=0.04, video_scale=1.0,
+                 seed=3):
     """Write a recording. ``marker_shift`` moves the markers (only) that
     many seconds late against everything else, as broken timing would."""
     rng = np.random.default_rng(seed)
@@ -136,8 +138,9 @@ def make_dataset(root: Path, *, alpha=True, n170=True, gaze_offset=0.0,
     (beh_dir / f"{STEM}_recording-eye1_physio.json").write_text(json.dumps({
         "ScreenSize": [0.53, 0.30], "ScreenDistance": 0.65}))
 
-    # The screen: each face appears 40 ms after its marker (the next
-    # frame), where its cross was.
+    # The screen: each face appears ``video_delay`` after its marker,
+    # where its cross was; ``video_scale`` > 1 scales the screen into
+    # the video and crops it, as an OBS canvas of another shape does.
     size = (160, 90)
     video = beh_dir / f"{STEM}_recording-screen_video.mp4"
     writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"),
@@ -149,8 +152,11 @@ def make_dataset(root: Path, *, alpha=True, n170=True, gaze_offset=0.0,
     for time in ft:
         frame = np.full((size[1], size[0], 3), 90, np.uint8)
         for on, x, y in faces:
-            if on + 0.04 <= time < on + 1.0:
-                cx, cy = int(x * size[0]), int(y * size[1])
+            if on + video_delay <= time < on + 1.0:
+                cx = int(x * video_scale * size[0])
+                cy = int(y * video_scale * size[1])
+                if cx >= size[0] or cy >= size[1]:
+                    continue
                 frame[max(0, cy - 12):cy + 12, max(0, cx - 9):cx + 9] = 220
         writer.write(frame)
     writer.release()
@@ -166,7 +172,10 @@ def make_dataset(root: Path, *, alpha=True, n170=True, gaze_offset=0.0,
 def run(tmp_path, **kwargs):
     root = make_dataset(tmp_path / "bids", **kwargs)
     checks = analyse.analyse(root, "01", out=tmp_path / "report")
-    return {c.name.split()[0]: c for c in checks}, tmp_path / "report"
+    assert [c.name for c in checks if c.info] == [
+        "EEG signal quality", "Screen recording setup"]
+    return ({c.name.split()[0]: c for c in checks if not c.info},
+            tmp_path / "report")
 
 
 def test_good_recording_passes(tmp_path):
@@ -235,3 +244,23 @@ def test_make_project(tmp_path):
         "brAIndumpValidation"
     assert project["devices"]["obs"]["label"] == "screen"
     assert "Project:" in out.stdout
+
+
+def test_screen_recording_scaled_and_late(tmp_path):
+    """As in the first session with real hardware: OBS's canvas scaled and
+    cropped the screen, and its frames came 390 ms after the screen
+    showed them. The faces are still found, the steady delay is measured
+    and the fix is named."""
+    checks, _ = run(tmp_path, video_delay=0.39, video_scale=1.44)
+    sync = checks["Synchronisation"]
+    assert sync.passed is False
+    text = "\n".join(sync.lines)
+    found = re.search(r"faces appear in the screen recording \*\*(\d+) ms",
+                      text)
+    assert found and 380 <= int(found.group(1)) <= 430, text
+    assert "Set the OBS input's Delay to" in text
+
+
+def test_screen_recording_scaled_but_in_time(tmp_path):
+    checks, _ = run(tmp_path, video_scale=1.44)
+    assert checks["Synchronisation"].passed, checks["Synchronisation"].lines

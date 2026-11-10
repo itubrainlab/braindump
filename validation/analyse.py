@@ -13,8 +13,9 @@ Four checks, each passed or failed against the criteria below, written to
    (0.6-2.0 s after it appears), the median gaze is within 1.5 degrees
    of it, for at least 80 % of the crosses.
 3. **N170**: the average EEG after the faces, at the occipito-temporal
-   electrodes (PO7/PO8), has a negative peak between 130 and 200 ms that
-   is reliably below zero across trials (one-sample t-test, p < 0.05).
+   electrodes (PO7/PO8, average reference), has a negative peak between
+   130 and 200 ms that is reliably below zero across trials (one-sample
+   t-test, p < 0.05).
 4. **Synchronisation**: every device's data are on one timeline.
    - the markers in eeg/ and beh/ events.tsv are the same, to 1 ms;
    - the eyes reach each new cross 80-500 ms after its marker (a saccade
@@ -96,6 +97,7 @@ class Recording:
     gaze_t: Optional[np.ndarray] = None       # EEG seconds
     gaze: Optional[np.ndarray] = None         # (n, 3): x, y, valid
     screen_m: Optional[tuple[float, float]] = None
+    screen_px: Optional[tuple[int, int]] = None
     distance_m: Optional[float] = None
     video: Optional[Path] = None
     frame_t: Optional[np.ndarray] = None      # EEG seconds
@@ -175,6 +177,8 @@ def load(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
                 rec.screen_m = tuple(e["ScreenSize"])
             if isinstance(e.get("ScreenDistance"), (int, float)):
                 rec.distance_m = float(e["ScreenDistance"])
+            if isinstance(e.get("ScreenResolution"), list):
+                rec.screen_px = tuple(int(v) for v in e["ScreenResolution"])
     else:
         rec.notes.append("No gaze recording found.")
 
@@ -198,6 +202,8 @@ class Check:
     passed: Optional[bool]               # None: could not be checked
     lines: list[str] = field(default_factory=list)
     figure: Optional[str] = None
+    #: Information beside the checks, not passed or failed.
+    info: bool = False
 
 
 def _channels(rec: Recording, preferred) -> list[int]:
@@ -213,8 +219,10 @@ def _segment(rec: Recording, start: float, end: float) -> np.ndarray:
 
 
 def _alpha_power(x: np.ndarray, fs: float) -> tuple[np.ndarray, np.ndarray]:
+    # The median over the 2 s windows: a movement or a blink in one window
+    # does not count as alpha.
     f, p = signal.welch(x, fs, nperseg=int(2 * fs), axis=0,
-                        detrend="linear")
+                        detrend="linear", average="median")
     band = (f >= ALPHA[0]) & (f <= ALPHA[1])
     return f, p, p[band].mean(axis=0)
 
@@ -306,6 +314,19 @@ def check_gaze(rec: Recording, plt=None, out: Path = None) -> Check:
         c.lines.append(f"Mean offset (screen fraction): x {o[:, 0].mean():+.3f},"
                        f" y {o[:, 1].mean():+.3f}; valid gaze "
                        f"{np.mean(valid_share) * 100:.0f} % of samples")
+    regions = {"top": [], "middle": [], "bottom": []}
+    for (onset, x, y), share in zip(fixations, valid_share):
+        key = "top" if y < 1 / 3 else "middle" if y < 2 / 3 else "bottom"
+        regions[key].append(share)
+    c.lines.append("Valid gaze at the crosses, by height on the screen: " +
+                   ", ".join(f"{k} {np.mean(v) * 100:.0f} % ({len(v)})"
+                             for k, v in regions.items() if v))
+    weak = [k for k, v in regions.items() if v and np.mean(v) < 0.6]
+    if weak:
+        c.lines.append(f"The eye tracker loses the eyes at the {' and '.join(weak)}"
+                       f" of the screen: check the GP3's angle and the "
+                       f"participant's height and distance (the eye view's "
+                       f"hints), or keep the stimuli within its range.")
     if rec.screen_m is None:
         c.lines.append("The screen's size was not recorded: degrees assume a "
                        "53 cm wide screen at 65 cm.")
@@ -333,7 +354,16 @@ def check_n170(rec: Recording, plt=None, out: Path = None) -> Check:
     chans = _channels(rec, N170_SITES)
     sos = signal.butter(4, [0.5, 30], btype="bandpass", fs=rec.fs,
                         output="sos")
-    eeg = signal.sosfiltfilt(sos, rec.eeg[:, chans], axis=0)
+    every = [i for i, t in enumerate(rec.eeg_types) if t == "EEG"]
+    filtered = signal.sosfiltfilt(sos, rec.eeg[:, every], axis=0)
+    # The average reference, as N170 studies use: a mastoid reference
+    # (the Unicorn's) lies next to PO7/PO8 and takes most of it away.
+    reference = "average"
+    if len(every) >= 4:
+        filtered = filtered - filtered.mean(axis=1, keepdims=True)
+    else:
+        reference = "as recorded"
+    eeg = filtered[:, [every.index(i) for i in chans]]
     a, b = int(EPOCH[0] * rec.fs), int(EPOCH[1] * rec.fs)
     epochs = []
     for m in faces:
@@ -360,7 +390,8 @@ def check_n170(rec: Recording, plt=None, out: Path = None) -> Check:
     tstat, p = stats.ttest_1samp(amplitudes, 0.0)
     in_window = N170_WINDOW[0] <= latency <= N170_WINDOW[1]
     c.passed = bool(in_window and amplitudes.mean() < 0 and p / 2 < 0.05)
-    c.lines.append(f"Sites: {', '.join(rec.labels[i] for i in chans)}; "
+    c.lines.append(f"Sites: {', '.join(rec.labels[i] for i in chans)} "
+                   f"({reference} reference, 0.5-30 Hz); "
                    f"{len(clean)}/{len(epochs)} epochs")
     c.lines.append(f"Negative peak at **{latency * 1000:.0f} ms** (pass: "
                    f"{N170_WINDOW[0] * 1000:.0f}-{N170_WINDOW[1] * 1000:.0f} ms),"
@@ -382,6 +413,48 @@ def check_n170(rec: Recording, plt=None, out: Path = None) -> Check:
     return c
 
 
+def eeg_quality(rec: Recording) -> Check:
+    """Each EEG channel's mains hum and noise during the faces: the likely
+    reason when alpha or the N170 fails."""
+    c = Check("EEG signal quality", None, info=True)
+    if rec.eeg is None:
+        c.lines.append("No EEG.")
+        return c
+    faces, blanks = rec.all("face"), rec.all("blank")
+    lo = faces[0].onset if faces else 0.0
+    hi = blanks[-1].onset + 1 if blanks else len(rec.eeg) / rec.fs
+    x = _segment(rec, lo, hi)
+    eeg = [i for i, t in enumerate(rec.eeg_types) if t == "EEG"]
+    f, p = signal.welch(x[:, eeg], rec.fs, nperseg=int(2 * rec.fs), axis=0,
+                        detrend="linear")
+    df = f[1] - f[0]
+    mains = np.sqrt(p[(f >= 48) & (f <= 62)].sum(axis=0) * df)
+    sos = signal.butter(4, [1, 30], btype="bandpass", fs=rec.fs,
+                        output="sos")
+    sd = signal.sosfiltfilt(sos, x[:, eeg], axis=0).std(axis=0)
+    c.lines.append("During the faces. Poor contact shows as noise over 50 µV "
+                   "(1-30 Hz SD); strong mains hum (over 50 µV) hints at "
+                   "high impedance, but is filtered out of the checks.")
+    c.lines.append("")
+    c.lines.append("| Channel | Mains (µV RMS) | Noise 1-30 Hz (µV SD) | |")
+    c.lines.append("|---|---|---|---|")
+    poor = []
+    for i, m, s_ in zip(eeg, mains, sd):
+        bad = s_ > 50
+        poor += [rec.labels[i]] if bad else []
+        verdict = "poor" if bad else "good, mains high" if m > 50 \
+            else "good"
+        c.lines.append(f"| {rec.labels[i]} | {m:.1f} | {s_:.1f} | "
+                       f"{verdict} |")
+    if poor:
+        c.lines.append("")
+        c.lines.append(f"Poor contact: {', '.join(poor)}. Wet or reseat these "
+                       f"electrodes and check the reference and ground behind "
+                       f"the ears; the data viewer's quality dots should be "
+                       f"green before recording.")
+    return c
+
+
 def _saccade_latencies(rec: Recording) -> list[float]:
     """For each new cross: when the gaze first comes within 3 degrees of
     it, from its marker."""
@@ -400,47 +473,83 @@ def _saccade_latencies(rec: Recording) -> list[float]:
 
 
 def _video_latencies(rec: Recording) -> list[float]:
-    """For each face: when it appears in the screen recording, from its
-    marker (the first frame where the face's place changes)."""
+    """For each face: when the screen recording shows it, from its marker.
+
+    The face replaces the cross, so the picture changes: the first frame
+    after the marker that differs from the one before it (more than the
+    frames before had changed) is when the face arrived. Measured on the
+    whole picture, so it does not matter how OBS scales or crops the
+    screen into its canvas."""
     import cv2
-    faces = [(m.onset, float(m.field("x")), float(m.field("y")))
-             for m in rec.all("face") if m.field("x") is not None]
+    faces = [m.onset for m in rec.all("face")]
     if not faces or rec.frame_t is None:
         return []
-    windows = [(onset - 0.5, onset + 0.6) for onset, _, _ in faces]
-    series: list[list[tuple[float, float]]] = [[] for _ in faces]
+    ft = rec.frame_t
+    wanted = np.zeros(len(ft), bool)
+    for onset in faces:
+        wanted |= (ft >= onset - 1.0) & (ft <= onset + 0.9)
+    diffs = np.full(len(ft), np.nan)
     capture = cv2.VideoCapture(str(rec.video))
-    i = 0
-    while True:
+    previous, i = None, 0
+    while i < len(ft):
+        if not wanted[i] and not (i + 1 < len(ft) and wanted[i + 1]):
+            if not capture.grab():
+                break
+            previous, i = None, i + 1
+            continue
         ok, frame = capture.read()
-        if not ok or i >= len(rec.frame_t):
+        if not ok:
             break
-        t = rec.frame_t[i]
-        i += 1
-        for k, (lo, hi) in enumerate(windows):
-            if lo <= t <= hi:
-                h, w = frame.shape[:2]
-                _, x, y = faces[k]
-                r = int(0.06 * h)
-                cx, cy = int(x * w), int(y * h)
-                roi = frame[max(0, cy - r):cy + r, max(0, cx - r):cx + r]
-                series[k].append((t, float(roi.mean())))
+        small = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
+                           (240, 135)).astype(np.float32)
+        if previous is not None:
+            diffs[i] = float(np.abs(small - previous).mean())
+        previous, i = small, i + 1
     capture.release()
     out = []
-    for (onset, _, _), s in zip(faces, series):
-        if len(s) < 5:
+    for onset in faces:
+        base = diffs[(ft >= onset - 0.9) & (ft < onset - 0.25)]
+        base = base[~np.isnan(base)]
+        window = np.flatnonzero((ft >= onset - 0.2) & (ft <= onset + 0.8))
+        if len(base) < 3 or not len(window):
             continue
-        t = np.array([v[0] for v in s])
-        v = np.array([v[1] for v in s])
-        base = v[t < onset - 0.1]
-        if len(base) < 2:
-            continue
-        threshold = max(8.0, 6 * np.median(np.abs(base - np.median(base))))
-        changed = (np.abs(v - np.median(base)) > threshold) & \
-            (t >= onset - 0.3)
-        if changed.any():
-            out.append(float(t[np.argmax(changed)] - onset))
+        threshold = max(0.5, 5 * float(np.median(base)))
+        changed = window[np.nan_to_num(diffs[window]) > threshold]
+        if len(changed):
+            out.append(float(ft[changed[0]] - onset))
     return out
+
+
+def video_setup(rec: Recording) -> Check:
+    """Whether OBS's picture has the screen's shape: if not, OBS scales or
+    crops the screen into its canvas."""
+    c = Check("Screen recording setup", None, info=True)
+    if rec.video is None:
+        c.lines.append("No screen recording.")
+        return c
+    import cv2
+    capture = cv2.VideoCapture(str(rec.video))
+    w, h = capture.get(cv2.CAP_PROP_FRAME_WIDTH), capture.get(
+        cv2.CAP_PROP_FRAME_HEIGHT)
+    capture.release()
+    c.lines.append(f"Video {w:.0f}×{h:.0f}" + (
+        f", {len(rec.frame_t)} frames at "
+        f"{1 / np.median(np.diff(rec.frame_t)):.1f} fps"
+        if rec.frame_t is not None and len(rec.frame_t) > 1 else ""))
+    screen = rec.screen_px
+    if screen and h:
+        ratio = (w / h) / (screen[0] / screen[1])
+        if abs(ratio - 1) > 0.02:
+            c.lines.append(f"The screen is {screen[0]}×{screen[1]}: OBS's "
+                           f"canvas has another shape, so the screen is "
+                           f"scaled or cropped into it. In OBS: Settings → "
+                           f"Video → Base (Canvas) Resolution to the screen's "
+                           f"shape, and the capture fitted to it (right-click "
+                           f"→ Transform → Fit to screen).")
+        else:
+            c.lines.append(f"Same shape as the screen ({screen[0]}×"
+                           f"{screen[1]}).")
+    return c
 
 
 def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
@@ -493,20 +602,18 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
     if rec.gaze is not None and closed and opened:
         lost = _first_run(rec.gaze_t, rec.gaze[:, 2] <= 0, closed.onset, 0.5)
         back = _first_run(rec.gaze_t, rec.gaze[:, 2] > 0, opened.onset, 0.5)
-        ok = lost is not None and back is not None and 0 <= lost <= 3 and \
-            0 <= back <= 3
+        ok = lost is not None and 0 <= lost <= 3
         verdicts.append(ok)
-        c.lines.append(f"- {'✓' if ok else '✗'} gaze lost "
-                       f"{_ms(lost)} after 'eyes closed', back {_ms(back)} "
-                       f"after the tone (pass: 0-3 s)")
+        c.lines.append(f"- {'✓' if ok else '✗'} gaze lost {_ms(lost)} after "
+                       f"'eyes closed' (pass: 0-3 s); back {_ms(back)} "
+                       f"after the tone (information: where the eyes go "
+                       f"after opening is up to the participant)")
     if rec.eeg is not None and closed and rec.first("rest_open_start"):
         rise = _alpha_rise(rec, rec.first("rest_open_start").onset,
                            closed.onset, opened.onset if opened else None)
-        if rise is not None:
-            ok = 0 <= rise <= 3
-            verdicts.append(ok)
-            c.lines.append(f"- {'✓' if ok else '✗'} EEG alpha rises "
-                           f"{_ms(rise)} after 'eyes closed' (pass: 0-3 s)")
+        c.lines.append(f"- EEG alpha rises {_ms(rise)} after 'eyes closed' "
+                       f"(information: usually within 1-3 s, but how fast "
+                       f"varies between people)")
 
     # Screen vs markers: each face in the screen recording.
     video = _video_latencies(rec) if rec.video is not None else []
@@ -527,6 +634,11 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
                        f"recording **{med:.0f} ms** after their markers "
                        f"(IQR {iqr:.0f} ms, {len(v)} faces; pass: 0-200 ms, "
                        f"IQR < 50 ms)")
+        if med > 200 and iqr < 50:
+            c.lines.append(f"  The delay is steady: it is OBS's capture and "
+                           f"output. Set the OBS input's Delay to "
+                           f"{med:.0f} ms in brAIn dump, and its frames are "
+                           f"placed when they were on screen.")
         if plt is not None:
             fig, ax = plt.subplots(figsize=(6, 3))
             ax.hist(v, bins=20)
@@ -612,23 +724,27 @@ def analyse(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
         except ImportError:
             plt = None
     checks = [check_alpha(rec, plt, out), check_gaze(rec, plt, out),
-              check_n170(rec, plt, out), check_sync(rec, plt, out)]
+              check_n170(rec, plt, out), check_sync(rec, plt, out),
+              eeg_quality(rec), video_setup(rec)]
     if out is not None:
         _write_report(out / "report.md", rec, checks)
     return checks
 
 
-def _verdict(passed: Optional[bool]) -> str:
-    return {True: "PASS", False: "FAIL", None: "NOT CHECKED"}[passed]
+def _verdict(check) -> str:
+    if check.info:
+        return "INFO"
+    return {True: "PASS", False: "FAIL", None: "NOT CHECKED"}[check.passed]
 
 
 def _write_report(path: Path, rec: Recording, checks: list[Check]) -> None:
     lines = [f"# brAIn dump validation: {rec.stem}", ""]
     lines += [f"> {note}" for note in rec.notes]
     lines += ["", "| Check | Result |", "|---|---|"]
-    lines += [f"| {c.name} | **{_verdict(c.passed)}** |" for c in checks]
+    lines += [f"| {c.name} | **{_verdict(c)}** |" for c in checks
+              if not c.info]
     for c in checks:
-        lines += ["", f"## {c.name}: {_verdict(c.passed)}", ""] + c.lines
+        lines += ["", f"## {c.name}: {_verdict(c)}", ""] + c.lines
         if c.figure:
             lines += ["", f"![{c.name}]({c.figure})"]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -649,11 +765,11 @@ def main(argv=None) -> int:
                        / f"sub-{args.sub}")
     checks = analyse(args.bids, args.sub, args.ses, args.task, args.run, out)
     for c in checks:
-        print(f"\n[{_verdict(c.passed)}] {c.name}")
+        print(f"\n[{_verdict(c)}] {c.name}")
         for line in c.lines:
             print("   " + line.replace("**", ""))
     print(f"\nReport: {out / 'report.md'}")
-    return 0 if all(c.passed for c in checks) else 1
+    return 0 if all(c.passed for c in checks if not c.info) else 1
 
 
 if __name__ == "__main__":
