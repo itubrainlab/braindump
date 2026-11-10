@@ -44,6 +44,7 @@ a misalignment of more than a few tens of ms moves it out of its window.
 | [`face_validation.py`](face_validation.py) | The procedure, in PsychoPy. Every step is an LSL marker (stream `brAIndumpValidation`) stamped at the screen flip that shows it. |
 | [`make_project.py`](make_project.py) | Makes the brAIn dump project the procedure records with. |
 | [`analyse.py`](analyse.py) | Checks a recording; writes `report.md` with figures. |
+| [`screen_delay.py`](screen_delay.py) | Measures how late OBS's NDI frames are: the value for the OBS input's Delay. |
 
 ## The procedure
 
@@ -95,6 +96,19 @@ works, in its place.
 **OBS.** Install the [DistroAV](https://github.com/DistroAV/DistroAV) plugin,
 capture the participant's screen (Display Capture), and turn on
 **Tools → NDI Output Settings → Main Output**.
+
+Set **Settings → Video** so the canvas has the screen's shape (e.g.
+2560×1440), and fit the capture to it (Edit → Transform → Fit to screen):
+otherwise OBS sends only part of the screen. Then measure OBS's delay, and
+set it as the OBS input's **Delay** in brAIn dump:
+
+```bash
+python validation/screen_delay.py
+```
+
+PsychoPy flashes the screen for half a minute while this times the flashes
+in OBS's NDI stream, as brAIn dump receives it. Measure again whenever OBS's
+video settings change.
 
 **The face images.** You need a folder of at least 30 face photographs. The
 lab's questionnaire study has 36:
@@ -204,4 +218,4 @@ server`, and OBS over NDI.
 | **Alpha** | **Passed**: closed / open 3.2 (Pz 13.8, Oz 5.3). |
 | **N170** | **Passed**: −2.6 µV at 168 ms, p < 0.001 (average reference). |
 | **Gaze** | Median error 1.36°, but the GP3 lost the eyes for crosses on the **top third** of the screen (valid gaze 8 %, against 90–99 % lower down): the GP3's angle. |
-| **Synchronisation** | Markers, coverage and the eyes passed: saccades 321 ms after each cross. The screen recording ran **391 ms** late, very steadily (IQR 13 ms): OBS's delay on this Mac, to set as the OBS input's Delay. OBS's canvas (3600×2338) did not have the screen's shape. |
+| **Synchronisation** | Markers, coverage and the eyes passed: saccades 321 ms after each cross. The screen recording ran **391 ms** late, very steadily (IQR 13 ms), and OBS's canvas (3600×2338) did not have the screen's shape. With the canvas set to 2560×1440 and the capture fitted, `screen_delay.py` measured **43 ms** (IQR 42–43 ms, 60 fps): most of the delay was OBS scaling its odd canvas. |
