@@ -13,6 +13,7 @@ import time
 import pytest
 
 from braindump.devices import make_device
+from braindump.devices.hiamp import _simulated_filters, amplifier_filter
 from braindump.project import Project
 from braindump.recording import Session, Subject
 
@@ -29,6 +30,13 @@ def test_recorded_dataset_is_valid(tmp_path):
         project.add_device(kind, {"simulate": True, "accelerometer": True})
     # A notch at several frequencies, written as a list in channels.tsv.
     project.devices["unicorn"]["record_notch"] = "Cascading 50 Hz"
+    # The g.HIamp's own band-pass and notch, as if listed when connected.
+    known = {kind: [amplifier_filter(e, kind)
+                    for e in _simulated_filters(kind, 256)]
+             for kind in ("bandpass", "notch")}
+    project.devices["hiamp"].update(
+        amp_filters={"256": known}, amp_bandpass=known["bandpass"][-1]["index"],
+        amp_notch=known["notch"][0]["index"], record_lowpass=50.0)
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
     for d in devices:
