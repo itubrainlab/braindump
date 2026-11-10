@@ -37,7 +37,7 @@ jobs:
       - name: Set up .venv
         run: |
           uv venv --python 3.12 .venv
-          uv pip install --python .venv -e ".[test,shimmer]"
+          uv pip install --python .venv -e ".[test,shimmer,validation]"
       - name: Tests
         run: |
           if [ "$RUNNER_OS" = Windows ]; then BIN=.venv/Scripts; else BIN=.venv/bin; fi
@@ -57,7 +57,7 @@ jobs:
       - name: Set up .venv
         run: |
           uv venv --python 3.12 .venv
-          uv pip install --python .venv -e ".[test,shimmer]"
+          uv pip install --python .venv -e ".[test,shimmer,validation]"
       - name: Build
         run: |
           packaging/linux/build_linux.sh
@@ -126,7 +126,7 @@ jobs:
         run: |
           uv python install 3.12
           uv venv --python 3.12 .venv
-          uv pip install --python .venv -e ".[test,shimmer]"
+          uv pip install --python .venv -e ".[test,shimmer,validation]"
       - name: Build
         run: packaging/macos/build_app.sh
       - name: Check the app

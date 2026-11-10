@@ -44,6 +44,8 @@ classifiers = [
 test = ["pytest>=7", "bids-validator-deno>=2.0"]
 # The Shimmer's driver is GPL-3.0, so it is optional.
 shimmer = ["pyshimmer>=1.0"]
+# The validation procedure's analysis (validation/analyse.py) draws figures.
+validation = ["matplotlib>=3.7"]
 
 [project.gui-scripts]
 braindump = "braindump.app:main"

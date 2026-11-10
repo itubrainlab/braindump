@@ -86,6 +86,13 @@ headset's clock drifts. A test sends a UDP trigger (placed by g.Pype) and
 an LSL marker (placed by brAIn dump) at the same instant and checks they
 land on the same EEG sample.
 
+## Validating a setup
+
+[`validation/`](validation/README.md) has a 10-minute procedure, in
+PsychoPy with LSL markers, and an analysis that checks a recording: EEG
+alpha with the eyes closed vs open, gaze accuracy, the N170 to faces, and
+the synchronisation of EEG, markers, eyes and the screen (OBS).
+
 ## Devices by system
 
 | | Windows | macOS | Linux |
