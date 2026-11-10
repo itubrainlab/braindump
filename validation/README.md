@@ -29,7 +29,7 @@ markers:
   after the tone, and when the EEG's alpha rises, are reported as
   information: both depend on the participant.
 - **Screen:** each face appears in the screen recording −20 to 200 ms after
-  its marker, with an IQR under 50 ms. With the OBS input's Delay set (see
+  its marker, with an IQR under 50 ms. With the Screen Capture's Delay set (see
   `screen_delay.py`), it should be about 0, give or take a frame. The face is
   found as a change of the whole picture, so it doesn't matter how OBS
   scales the screen into its canvas.
@@ -45,7 +45,7 @@ a misalignment of more than a few tens of ms moves it out of its window.
 | [`face_validation.py`](face_validation.py) | The procedure, in PsychoPy. Every step is an LSL marker (stream `brAIndumpValidation`) stamped at the screen flip that shows it. |
 | [`make_project.py`](make_project.py) | Makes the brAIn dump project the procedure records with. |
 | [`analyse.py`](analyse.py) | Checks a recording; writes `report.md` with figures. |
-| [`screen_delay.py`](screen_delay.py) | Measures how late OBS's NDI frames are: the value for the OBS input's Delay. |
+| [`screen_delay.py`](screen_delay.py) | Measures how late OBS's NDI frames are: the value for the Screen Capture's Delay. |
 
 ## The procedure
 
@@ -101,7 +101,7 @@ capture the participant's screen (Display Capture), and turn on
 Set **Settings → Video** so the canvas has the screen's shape (e.g.
 2560×1440), and fit the capture to it (Edit → Transform → Fit to screen):
 otherwise OBS sends only part of the screen. Then measure OBS's delay, and
-set it as the OBS input's **Delay** in brAIn dump:
+set it as the Screen Capture's **Delay** in brAIn dump:
 
 ```bash
 python validation/screen_delay.py
@@ -129,7 +129,7 @@ script sets up four devices:
 - the Unicorn;
 - the GP3, read over the Open Gaze API;
 - the **LSL streams** device, listening for `brAIndumpValidation`;
-- **OBS (NDI)**, recording as `recording-screen`.
+- **Screen Capture** (OBS over NDI), recording as `recording-screen`.
 
 ## A session
 
@@ -185,7 +185,7 @@ and not significant against the mastoids.
 | N170 | The EEG signal quality section; too few clean epochs (> ±100 µV are left out). A latency outside 130–200 ms points to a timing offset (see Synchronisation). |
 | Markers in eeg/ and beh/ | A recording error: report it. |
 | Saccades to the crosses | Negative or > 500 ms: the gaze and the markers are out of step. Check the GP3's clock mapping (remote: the network); the latency settings. |
-| Faces in the screen recording | Not found: is OBS capturing the stimulus screen? (See Screen recording setup.) Late but steady (small IQR): that is OBS's capture and output delay. Set the OBS input's **Delay** in brAIn dump to the median the report gives, and record again. Spread out: NDI over a busy network, or OBS dropping frames. |
+| Faces in the screen recording | Not found: is OBS capturing the stimulus screen? (See Screen recording setup.) Late but steady (small IQR): that is OBS's capture and output delay. Set the Screen Capture's **Delay** in brAIn dump to the median the report gives, and record again. Spread out: NDI over a busy network, or OBS dropping frames. |
 
 ## Without hardware
 
