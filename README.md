@@ -14,8 +14,8 @@ Windows, macOS and Linux:
 - **Shimmer3 GSR+**: skin conductance and pulse (PPG);
 - **LSL streams**: markers from any Lab Streaming Layer stream, as events;
 - **Webcam**: any camera on the computer, as video;
-- **OBS (NDI)**: OBS's output over NDI (DistroAV plugin), low latency, from
-  this or another computer, as video.
+- **Screen Capture**: the screen as OBS Studio captures it, sent over NDI
+  (DistroAV plugin) with low latency from this or another computer, as video.
 
 Video is stored as BIDS behavioural video, following the BEP047 proposal
 (`beh/…_recording-<label>_video.mp4` and its sidecar, listed in

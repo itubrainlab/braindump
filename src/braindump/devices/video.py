@@ -612,11 +612,14 @@ class ObsConfig(VideoConfig):
 
 
 class ObsDevice(VideoDevice):
+    """Screen Capture: OBS's output over NDI. Its type stays "obs", so
+    projects saved before the rename still open."""
     TYPE = "obs"
-    NAME = "OBS (NDI)"
+    NAME = "Screen Capture"
     MANUFACTURER = "OBS Studio"
     MODEL = "NDI output"
-    DESCRIPTION = "OBS's output over NDI, low latency, from this or another " \
+    DESCRIPTION = "The screen as OBS Studio captures it, sent over NDI " \
+                  "(DistroAV plugin) with low latency from this or another " \
                   "computer, recorded as BIDS video"
     CONFIG = ObsConfig
 

@@ -1,4 +1,4 @@
-"""Measure how late OBS's NDI frames are: the value for the OBS input's
+"""Measure how late OBS's NDI frames are: the value for the Screen Capture's
 Delay setting in brAIn dump.
 
     python validation/screen_delay.py [--psychopy PATH] [--flashes 20]
@@ -156,7 +156,7 @@ def main(argv=None) -> int:
     print(f"{len(d)} changes: median {np.median(d):.0f} ms "
           f"(IQR {q1:.0f}-{q3:.0f} ms, range {d.min():.0f}-{d.max():.0f})")
     print(f"Fps of the stream: {1 / np.median(np.diff(times)):.1f}")
-    print(f"\nSet the OBS input's Delay in brAIn dump to "
+    print(f"\nSet the Screen Capture's Delay in brAIn dump to "
           f"{np.median(d):.0f} ms.")
     return 0
 

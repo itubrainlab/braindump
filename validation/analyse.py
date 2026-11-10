@@ -23,7 +23,7 @@ Four checks, each passed or failed against the criteria below, written to
    - gaze is lost within 3 s of "eyes closed" and back within 3 s of the
      tone, and the EEG's alpha rises within 3 s of eyes closed;
    - in the screen recording, each face appears -20 to 200 ms after its
-     marker (what the OBS input's Delay leaves: 0 when it is set right,
+     marker (what the Screen Capture's Delay leaves: 0 when it is set right,
      give or take a frame), with a spread (IQR) under 50 ms;
    - every recording covers the whole procedure.
 
@@ -648,7 +648,7 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
         v = np.array(video) * 1000
         med = float(np.median(v))
         iqr = float(np.subtract(*np.percentile(v, [75, 25])))
-        # Corrected by the OBS input's Delay, a frame comes when it was on
+        # Corrected by the Screen Capture's Delay, a frame comes when it was on
         # screen: 0, give or take a frame (17 ms at 60 fps).
         ok = -20 <= med <= 200 and iqr < 50
         verdicts.append(ok)
@@ -658,7 +658,7 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
                        f"ms, IQR < 50 ms)")
         if med > 50 and iqr < 50:
             c.lines.append(f"  The delay is steady: it is OBS's capture and "
-                           f"output. Set the OBS input's Delay to "
+                           f"output. Set the Screen Capture's Delay to "
                            f"{med:.0f} ms in brAIn dump, and its frames are "
                            f"placed when they were on screen.")
         if plt is not None:

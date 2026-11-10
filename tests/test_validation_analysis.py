@@ -258,7 +258,7 @@ def test_screen_recording_scaled_and_late(tmp_path):
     found = re.search(r"faces appear in the screen recording \*\*(\d+) ms",
                       text)
     assert found and 380 <= int(found.group(1)) <= 430, text
-    assert "Set the OBS input's Delay to" in text
+    assert "Set the Screen Capture's Delay to" in text
 
 
 def test_screen_recording_scaled_but_in_time(tmp_path):
