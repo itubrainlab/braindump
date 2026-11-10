@@ -28,8 +28,9 @@ markers:
 - **Eyes:** gaze is lost within 3 s of "eyes closed". When it comes back
   after the tone, and when the EEG's alpha rises, are reported as
   information: both depend on the participant.
-- **Screen:** each face appears in the screen recording 0–200 ms after its
-  marker (display, capture and NDI), with an IQR under 50 ms. The face is
+- **Screen:** each face appears in the screen recording −20 to 200 ms after
+  its marker, with an IQR under 50 ms. With the OBS input's Delay set (see
+  `screen_delay.py`), it should be about 0, give or take a frame. The face is
   found as a change of the whole picture, so it doesn't matter how OBS
   scales the screen into its canvas.
 - **Coverage:** EEG, gaze and screen each cover the whole procedure.
@@ -219,3 +220,26 @@ server`, and OBS over NDI.
 | **N170** | **Passed**: −2.6 µV at 168 ms, p < 0.001 (average reference). |
 | **Gaze** | Median error 1.36°, but the GP3 lost the eyes for crosses on the **top third** of the screen (valid gaze 8 %, against 90–99 % lower down): the GP3's angle. |
 | **Synchronisation** | Markers, coverage and the eyes passed: saccades 321 ms after each cross. The screen recording ran **391 ms** late, very steadily (IQR 13 ms), and OBS's canvas (3600×2338) did not have the screen's shape. With the canvas set to 2560×1440 and the capture fitted, `screen_delay.py` measured **43 ms** (IQR 42–43 ms, 60 fps): most of the delay was OBS scaling its odd canvas. |
+
+### Second session (run 2), after fixing the setup
+
+OBS's canvas at the screen's shape, the capture fitted, its Delay set to the
+measured 43 ms, and the GP3 tilted up.
+
+| Check | Result |
+|---|---|
+| **Alpha** | **Passed**: closed / open 1.9. |
+| **N170** | **Passed**: −1.9 µV at 172 ms, p < 0.001. |
+| **Synchronisation** | **Passed**. The screen is −5 ms from the markers (IQR 3 ms, 30 faces); the eyes reach each cross 333 ms after its marker; gaze is lost 13 ms after "eyes closed". |
+| **Gaze** | **Failed, narrowly**: 29/30 crosses tracked, median error 1.06°, but 66 % of crosses within 1.5° (80 % needed). |
+
+Of the 10 crosses over 1.5°:
+
+- **4 were near the right edge**, where the GP3 lost the right eye and the
+  gaze moved to the left eye's calibration.
+- **6 read about 3° above the cross with both eyes**, scattered through the
+  session with the head steady at 63 cm: a vertical calibration weakness, or
+  the participant looking above those crosses.
+
+A 13-point calibration (`--points` takes only 5 or 9 now), or crosses kept
+within the GP3's range, are the next things to try.

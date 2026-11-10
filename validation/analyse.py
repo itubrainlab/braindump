@@ -22,8 +22,9 @@ Four checks, each passed or failed against the criteria below, written to
      cannot precede what it looks at, nor take half a second);
    - gaze is lost within 3 s of "eyes closed" and back within 3 s of the
      tone, and the EEG's alpha rises within 3 s of eyes closed;
-   - in the screen recording, each face appears 0-200 ms after its marker
-     (display, capture and NDI), with a spread (IQR) under 50 ms;
+   - in the screen recording, each face appears -20 to 200 ms after its
+     marker (what the OBS input's Delay leaves: 0 when it is set right,
+     give or take a frame), with a spread (IQR) under 50 ms;
    - every recording covers the whole procedure.
 
 Times are compared on the EEG's timeline: brAIn dump gives event onsets
@@ -96,6 +97,7 @@ class Recording:
     beh_markers: list[Marker] = field(default_factory=list)
     gaze_t: Optional[np.ndarray] = None       # EEG seconds
     gaze: Optional[np.ndarray] = None         # (n, 3): x, y, valid
+    eyes_valid: Optional[np.ndarray] = None   # (n, 2): left, right valid
     screen_m: Optional[tuple[float, float]] = None
     screen_px: Optional[tuple[int, int]] = None
     distance_m: Optional[float] = None
@@ -168,6 +170,9 @@ def load(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
         rec.gaze_t = t
         rec.gaze = rows[:, [cols.index("BPOGX"), cols.index("BPOGY"),
                             cols.index("BPOGV")]]
+        if "LPOGV" in cols and "RPOGV" in cols:
+            rec.eyes_valid = rows[:, [cols.index("LPOGV"),
+                                      cols.index("RPOGV")]]
         eye = gaze[0].with_name(gaze[0].name.replace("recording-gaze",
                                                      "recording-eye1")
                                 .replace(".tsv.gz", ".json"))
@@ -314,6 +319,21 @@ def check_gaze(rec: Recording, plt=None, out: Path = None) -> Check:
         c.lines.append(f"Mean offset (screen fraction): x {o[:, 0].mean():+.3f},"
                        f" y {o[:, 1].mean():+.3f}; valid gaze "
                        f"{np.mean(valid_share) * 100:.0f} % of samples")
+    if rec.eyes_valid is not None:
+        one_eye, big = 0, 0
+        for (onset, x, y), err in zip(fixations, errors):
+            sel = (rec.gaze_t >= onset + 0.6) & (rec.gaze_t <= onset + 2.0)
+            share = rec.eyes_valid[sel].mean(axis=0) if sel.any() else \
+                np.zeros(2)
+            if share.min() < 0.5 <= share.max():
+                one_eye += 1
+                big += int(err == err and err > 1.5)
+        if one_eye:
+            c.lines.append(f"Crosses seen by one eye only: {one_eye} ({big} of "
+                           f"them over 1.5°). The gaze is the mean of the eyes "
+                           f"seen, so when one is lost it moves to the other "
+                           f"eye's calibration: at the edges of the GP3's "
+                           f"range, keep stimuli further in.")
     regions = {"top": [], "middle": [], "bottom": []}
     for (onset, x, y), share in zip(fixations, valid_share):
         key = "top" if y < 1 / 3 else "middle" if y < 2 / 3 else "bottom"
@@ -628,13 +648,15 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
         v = np.array(video) * 1000
         med = float(np.median(v))
         iqr = float(np.subtract(*np.percentile(v, [75, 25])))
-        ok = 0 <= med <= 200 and iqr < 50
+        # Corrected by the OBS input's Delay, a frame comes when it was on
+        # screen: 0, give or take a frame (17 ms at 60 fps).
+        ok = -20 <= med <= 200 and iqr < 50
         verdicts.append(ok)
         c.lines.append(f"- {'✓' if ok else '✗'} faces appear in the screen "
                        f"recording **{med:.0f} ms** after their markers "
-                       f"(IQR {iqr:.0f} ms, {len(v)} faces; pass: 0-200 ms, "
-                       f"IQR < 50 ms)")
-        if med > 200 and iqr < 50:
+                       f"(IQR {iqr:.0f} ms, {len(v)} faces; pass: -20 to 200 "
+                       f"ms, IQR < 50 ms)")
+        if med > 50 and iqr < 50:
             c.lines.append(f"  The delay is steady: it is OBS's capture and "
                            f"output. Set the OBS input's Delay to "
                            f"{med:.0f} ms in brAIn dump, and its frames are "
