@@ -27,6 +27,8 @@ def test_recorded_dataset_is_valid(tmp_path):
                              authors=["A. Author", "B. Author"])
     for kind in ("unicorn", "hiamp", "gp3", "lsl", "polar", "shimmer", "webcam", "obs"):
         project.add_device(kind, {"simulate": True, "accelerometer": True})
+    # A notch at several frequencies, written as a list in channels.tsv.
+    project.devices["unicorn"]["record_notch"] = "Cascading 50 Hz"
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
     for d in devices:

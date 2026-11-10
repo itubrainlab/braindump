@@ -12,10 +12,11 @@ from rhinorecorder.ui.main_window import SourceToggle
 from rhinorecorder.ui.scope import Scope
 from rhinorecorder.ui.spectrum import SpectrumView
 
-from ..devices.unicorn import GROUPS, UnicornDevice, find_headsets
+from ..devices.unicorn import (GROUPS, HIGHPASS, LOWPASS, NYQUIST,
+                               UnicornDevice, find_headsets)
 from . import icons, theme
 from .device_page import DevicePage
-from .forms import ConfigForm, panel, row
+from .forms import ConfigForm, hint, panel, row
 
 
 class _Found(QObject):
@@ -53,8 +54,9 @@ class UnicornPage(DevicePage):
         self.scope.set_scale(presets.SCALINGS.get(cfg.view_scaling, 50.0))
         self._name_channels()
         self.scope_source = SourceToggle(
-            "Filtered: the EEG after the view's filter and notch. Raw: as "
-            "acquired, and as recorded.")
+            "Filtered: the EEG after the view's filter and notch (which are "
+            "not recorded). Raw: as acquired, before the recording filter "
+            "(see Settings).")
         self.spectrum = SpectrumView()
         self.spectrum_source = SourceToggle(
             "Filtered or raw EEG, averaged across the electrodes.")
@@ -119,6 +121,26 @@ class UnicornPage(DevicePage):
             channels.boolean(name, "" if name != "accelerometer" else
                              "Also record", text)
 
+        filters = ConfigForm("Recording filters", cfg)
+        filters.choice(
+            "record_highpass", "High-pass",
+            {f: "None" if f == 0 else f"{f:g} Hz" for f in HIGHPASS},
+            "Applied to the EEG channels as they are recorded.")
+        filters.choice(
+            "record_lowpass", "Low-pass",
+            {f: f"{f:g} Hz (half the sampling rate: none)" if f >= NYQUIST
+             else f"{f:g} Hz" for f in LOWPASS},
+            "Applied to the EEG channels as they are recorded.")
+        filters.choice("record_notch", "Notch",
+                       {name: name for name in presets.NOTCHES},
+                       "Removes the power line (and its harmonics, when "
+                       "cascading) from the recorded EEG.")
+        filters.form.addRow("", hint(
+            "4th-order Butterworth filters and IIR notches, causal, as in "
+            "Unicorn Recorder, described in the recording's eeg.json and "
+            "channels.tsv. The Filter and Notch boxes above the data viewer "
+            "change only what is shown, not what is recorded."))
+
         bids = ConfigForm("BIDS description", cfg)
         bids.line("reference", "Reference", "EEGReference")
         bids.line("ground", "Ground", "EEGGround")
@@ -129,9 +151,9 @@ class UnicornPage(DevicePage):
                         "Numbers sent here land in the TRIG channel and "
                         "events.tsv; 0 is off.", special="off")
         trigger.line("trigger_ip", "Listen on")
-        for form in (head, channels, bids, trigger):
+        for form in (head, channels, filters, bids, trigger):
             form.changed.connect(self._changed)
-        self.add_settings_tab(head, channels, bids, trigger)
+        self.add_settings_tab(head, channels, filters, bids, trigger)
 
     def _changed(self, attr: str):
         if attr == "electrodes":
