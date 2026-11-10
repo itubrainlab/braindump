@@ -53,5 +53,7 @@ def test_registry():
     # Shown as Screen Capture, still saved as "obs" (issue #3).
     assert DEVICE_TYPES["obs"].NAME == "Screen Capture"
     assert "OBS" in DEVICE_TYPES["obs"].DESCRIPTION
+    # Shown as Video Stream, still saved as "webcam" (issue #4).
+    assert DEVICE_TYPES["webcam"].NAME == "Video Stream"
     saved = json.loads(json.dumps(UnicornConfig().to_dict()))
     assert UnicornConfig.from_dict(saved) == UnicornConfig()
