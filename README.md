@@ -13,7 +13,8 @@ Windows, macOS and Linux:
 - **Polar H10**: ECG, heart rate and RR intervals;
 - **Shimmer3 GSR+**: skin conductance and pulse (PPG);
 - **LSL streams**: markers from any Lab Streaming Layer stream, as events;
-- **Webcam**: any camera on the computer, as video;
+- **Video Stream**: any camera on the computer (a webcam, a capture card),
+  as video;
 - **Screen Capture**: the screen as OBS Studio captures it, sent over NDI
   (DistroAV plugin) with low latency from this or another computer, as video.
 
@@ -104,7 +105,7 @@ the synchronisation of EEG, markers, eyes and the screen (OBS).
 | Polar H10 | Bluetooth LE | Bluetooth LE | Bluetooth LE (BlueZ) |
 | Shimmer3 GSR+ | pair it; its outgoing COM port | pair it; `/dev/cu.Shimmer3-…` | pair it and `rfcomm bind`; `/dev/rfcomm0` |
 | LSL | nothing | nothing | nothing |
-| Webcam | nothing | camera access, asked once | nothing (V4L2) |
+| Video Stream | nothing | camera access, asked once | nothing (V4L2) |
 | OBS over NDI | DistroAV plugin in OBS | DistroAV plugin in OBS | DistroAV plugin in OBS |
 
 g.tec's Unicorn driver has builds for Windows x64, Linux x86_64 and Apple
