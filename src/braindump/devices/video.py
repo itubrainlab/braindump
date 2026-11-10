@@ -590,10 +590,13 @@ class WebcamConfig(VideoConfig):
 
 
 class WebcamDevice(VideoDevice):
+    """Video Stream: a camera on this computer. Its type stays "webcam", so
+    projects saved before the rename still open."""
     TYPE = "webcam"
-    NAME = "Webcam"
+    NAME = "Video Stream"
     MANUFACTURER = ""
-    DESCRIPTION = "Any camera on this computer, recorded as BIDS video"
+    DESCRIPTION = "Any camera on this computer (a webcam, a capture card), " \
+                  "recorded as BIDS video"
     CONFIG = WebcamConfig
 
     def make_source(self):

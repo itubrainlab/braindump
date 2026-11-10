@@ -50,5 +50,7 @@ def test_recent_projects(tmp_path):
 
 def test_registry():
     assert set(DEVICE_TYPES) == {"unicorn", "hiamp", "gp3", "lsl", "polar", "shimmer", "webcam", "obs"}
+    # Shown as Video Stream, still saved as "webcam" (issue #4).
+    assert DEVICE_TYPES["webcam"].NAME == "Video Stream"
     saved = json.loads(json.dumps(UnicornConfig().to_dict()))
     assert UnicornConfig.from_dict(saved) == UnicornConfig()

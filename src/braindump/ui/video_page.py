@@ -1,4 +1,4 @@
-"""The webcam's and the OBS stream's page: what the camera (or OBS) sends,
+"""The video stream's and the OBS stream's page: what the camera (or OBS) sends,
 live, and its settings."""
 from __future__ import annotations
 
