@@ -57,6 +57,12 @@ rest of brAIn dump does without it.
   authors. The app opens on a project picker.
 - **UI**: Rhino Recorder's toolbar and viewer, plus a left column listing the
   project's devices and the supported ones (add with +, remove with ×).
+- **Unicorn recording filters**: a high-pass, a low-pass and a notch, chosen
+  in the Settings from Unicorn Recorder's filters (by default a 0.1 Hz
+  high-pass and no low-pass, i.e. half the sampling rate). They are applied
+  to the recorded EEG and described in `eeg.json` (`SoftwareFilters`) and
+  `channels.tsv`. The Filter and Notch boxes above the viewer only change
+  what is shown.
 - **GP3**: an eye view (camera image locally, pupil positions remotely),
   distance feedback, calibration (5/9/13/16/25 points, full-screen targets
   here or on the tracker computer), validation (local), and a plot of the

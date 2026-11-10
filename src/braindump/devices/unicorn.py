@@ -6,10 +6,13 @@ the Unicorn channel layout, swappable filters and gated loggers)::
 
     HeadsetSource ─┐                  ┌─ SweepTap "raw"   (quality, raw view)
     UDPReceiver ───┴─ Router ─ Layout ┼─ Filter ─ Notch ─ SweepTap "scope"
-                                      └─ Router (kept channels) ─ BidsBdfLogger
+                                      └─ Recording filter ─ Router (kept
+                                         channels) ─ BidsBdfLogger
 
-Recordings are raw (BIDS asks for raw data); the filters only shape the
-view.
+The recording filter (high-pass, low-pass and notch, set in the settings;
+by default a 0.1 Hz high-pass and no low-pass) is applied to the EEG as it
+is recorded, and described in the sidecars. The Filter and Notch boxes
+only shape the view.
 """
 from __future__ import annotations
 
@@ -57,6 +60,91 @@ _BIDS_TYPE = {"ACC": ("ACCEL", "g"), "GYR": ("GYRO", "deg/s"),
               "TRIG": ("TRIG", NA)}
 
 
+#: The recording filter's choices: every cut-off of the Unicorn Recorder's
+#: predefined filters (see :mod:`rhinorecorder.presets`). 0 is no
+#: high-pass; half the sampling rate is no low-pass.
+NYQUIST = layout.SAMPLING_RATE / 2
+
+
+def _cutoffs(btypes: tuple[str, ...], index: int) -> list[float]:
+    return sorted({float(spec[1][index if spec[0] == "bandpass" else 0])
+                   for spec in presets.FILTERS.values()
+                   if spec is not None and spec[0] in btypes})
+
+
+HIGHPASS = [0.0] + _cutoffs(("highpass", "bandpass"), 0)
+LOWPASS = _cutoffs(("lowpass", "bandpass"), 1) + [float(NYQUIST)]
+
+
+@dataclass
+class RecordingFilter:
+    """The filter applied to the EEG channels as they are recorded: a
+    4th-order Butterworth high-pass, low-pass or band-pass, then a notch,
+    all causal (as Unicorn Recorder filters)."""
+    highpass: float = 0.1
+    lowpass: float = float(NYQUIST)
+    notch: str = presets.NONE
+    fs: float = float(layout.SAMPLING_RATE)
+
+    @property
+    def low_cutoff(self) -> Optional[float]:
+        """The high-pass's cut-off, or None."""
+        return float(self.highpass) if 0 < self.highpass < self.fs / 2 \
+            else None
+
+    @property
+    def high_cutoff(self) -> Optional[float]:
+        """The low-pass's cut-off, or None (up to half the sampling rate,
+        which is no low-pass)."""
+        return float(self.lowpass) if 0 < self.lowpass < self.fs / 2 \
+            else None
+
+    def notches(self) -> list[float]:
+        return presets.notch_frequencies(self.notch, self.fs) \
+            if self.notch in presets.NOTCHES else []
+
+    def sos(self) -> Optional[np.ndarray]:
+        """Second-order sections of the whole filter; None for none."""
+        from scipy import signal
+        low, high = self.low_cutoff, self.high_cutoff
+        sections = []
+        if low and high:
+            if low >= high:
+                raise ValueError(f"The recording filter's high-pass "
+                                 f"({low:g} Hz) is above its low-pass "
+                                 f"({high:g} Hz).")
+            sections.append(signal.butter(presets.FILTER_ORDER, [low, high],
+                                          btype="bandpass", fs=self.fs,
+                                          output="sos"))
+        elif low or high:
+            sections.append(signal.butter(
+                presets.FILTER_ORDER, low or high,
+                btype="highpass" if low else "lowpass", fs=self.fs,
+                output="sos"))
+        if self.notches():
+            sections.append(presets.notch_sos(self.notch, self.fs))
+        return np.vstack(sections) if sections else None
+
+    def software_filters(self):
+        """The eeg.json's SoftwareFilters: what was applied, or n/a."""
+        found = {}
+        low, high = self.low_cutoff, self.high_cutoff
+        common = {"Type": "Butterworth", "Order": presets.FILTER_ORDER,
+                  "Causal": True, "Channels": "EEG"}
+        if low and high:
+            found["BandPass"] = {**common, "CutoffFrequencies": [low, high]}
+        elif low:
+            found["HighPass"] = {**common, "CutoffFrequency": low}
+        elif high:
+            found["LowPass"] = {**common, "CutoffFrequency": high}
+        if self.notches():
+            found["Notch"] = {"Type": "IIR notch",
+                              "QualityFactor": presets.NOTCH_Q,
+                              "Frequencies": self.notches(),
+                              "Causal": True, "Channels": "EEG"}
+        return found or NA
+
+
 @dataclass
 class UnicornConfig(DeviceConfig):
     #: Headset serial, e.g. UN-2024.10.18; empty for the first found.
@@ -80,11 +168,21 @@ class UnicornConfig(DeviceConfig):
     reference: str = "mastoids"
     ground: str = "mastoid"
     placement: str = "10-20"
-    # The view
+    # The filter on the recorded EEG (see RecordingFilter): 0 Hz is no
+    # high-pass, half the sampling rate no low-pass.
+    record_highpass: float = 0.1
+    record_lowpass: float = float(NYQUIST)
+    record_notch: str = presets.NONE
+    # The view (not recorded)
     view_filter: str = presets.DEFAULT_FILTER
     view_notch: str = presets.DEFAULT_NOTCH
     view_scaling: str = presets.DEFAULT_SCALING
     view_spectrum: bool = True
+
+    def recording_filter(self) -> RecordingFilter:
+        return RecordingFilter(float(self.record_highpass),
+                               float(self.record_lowpass),
+                               str(self.record_notch))
 
     def groups(self) -> dict[str, bool]:
         return {name: bool(getattr(self, name)) for name in GROUPS}
@@ -161,6 +259,7 @@ class Graph:
     bandpass: EegFilter
     notch: EegFilter
     logger: BidsBdfLogger
+    recorded: RecordingFilter
 
 
 def find_headsets(rescan: bool = False) -> list[str]:
@@ -226,14 +325,22 @@ class UnicornDevice(Device):
         self._channels = layout.selected(cfg.groups())
         logger = BidsBdfLogger(cfg.electrode_names(), cfg.latency_ms,
                                name="bids_bdf")
+        recorded = cfg.recording_filter()
         upstream = arranged
+        sos = recorded.sos()
+        if sos is not None:
+            # Fixed while connected: the sidecars describe one filter.
+            record_filter = EegFilter(sos, name="record_filter")
+            p.connect(arranged, record_filter)
+            upstream = record_filter
         if self._channels != list(range(len(layout.CHANNELS))):
             select = gp.Router(input_channels={
                 Constants.Defaults.PORT_IN: self._channels}, name="select")
-            p.connect(arranged, select)
+            p.connect(upstream, select)
             upstream = select
         p.connect(upstream, logger)
-        return Graph(p, source, arranged, raw, scope, bandpass, notch, logger)
+        return Graph(p, source, arranged, raw, scope, bandpass, notch, logger,
+                     recorded)
 
     def start(self) -> None:
         with self._lock:
@@ -333,10 +440,11 @@ class UnicornDevice(Device):
             labels = list(logger.labels)
             info = self.device_info
             timing = self._timing(graph.source, logger, samples)
+            recorded = graph.recorded
 
         def finalize(reference: Optional[Timeline]) -> None:
             self._write_sidecars(target, path, samples, labels, info,
-                                 timing)
+                                 timing, recorded)
 
         first = timing.timeline.t0
         moment = datetime.fromtimestamp(first)
@@ -379,7 +487,8 @@ class UnicornDevice(Device):
 
     def _write_sidecars(self, target: RecordingTarget, path: Path,
                         samples: int, labels: list[str],
-                        info: dict, timing: TimingFit) -> None:
+                        info: dict, timing: TimingFit,
+                        recorded: RecordingFilter) -> None:
         cfg = self.config
         fs = float(layout.SAMPLING_RATE)
         kinds = [self._bids_type(i) for i in self._channels]
@@ -392,7 +501,7 @@ class UnicornDevice(Device):
             "TaskName": target.entities.task,
             "SamplingFrequency": fs,
             "PowerLineFrequency": target.power_line_frequency,
-            "SoftwareFilters": NA,
+            "SoftwareFilters": recorded.software_filters(),
             "HardwareFilters": NA,
             "EEGReference": cfg.reference,
             "EEGGround": cfg.ground,
@@ -420,13 +529,25 @@ class UnicornDevice(Device):
                 "corrected for Bluetooth bursts and a "
                 f"{cfg.latency_ms:g} ms link delay"),
         })
+        # The recording filter acts on the EEG channels only.
+        low, high = recorded.low_cutoff, recorded.high_cutoff
+        notches = recorded.notches()
+        notch = NA
+        if len(notches) == 1:
+            notch = f"{notches[0]:g}"
+        elif notches:
+            notch = "[" + ", ".join(f"{f:g}" for f in notches) + "]"
         rows = []
         for label, (kind, unit) in zip(labels, kinds):
-            rows.append([label, kind, unit, NA, NA, fs, "good"])
+            eeg = kind == "EEG"
+            rows.append([label, kind, unit,
+                         f"{low:g}" if eeg and low else NA,
+                         f"{high:g}" if eeg and high else NA,
+                         notch if eeg else NA, fs, "good"])
         write_tsv(path.with_name(path.name.replace("_eeg.bdf",
                                                    "_channels.tsv")),
                   ["name", "type", "units", "low_cutoff", "high_cutoff",
-                   "sampling_frequency", "status"], rows)
+                   "notch", "sampling_frequency", "status"], rows)
 
     @staticmethod
     def _bids_type(index: int) -> tuple[str, str]:
