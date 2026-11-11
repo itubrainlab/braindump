@@ -6,14 +6,17 @@ import time
 from opengp3.server import element, parse_command
 
 from braindump.devices.gp3 import GP3Config
-from braindump.devices.gp3_backends import INDEX, RemoteBackend
+from braindump.devices.gp3_backends import (INDEX, RemoteBackend,
+                                           model_from_product, nominal_rate)
 
 
 class FakeServer:
     """Answers every command, streams REC records and runs a 5-point
     calibration the way Gazepoint Control does."""
 
-    def __init__(self):
+    def __init__(self, product=None):
+        #: PRODUCT_ID's answer, e.g. ("GP3HD", "150"); None leaves it out.
+        self.product = product
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
         self.sock.listen(1)
@@ -58,6 +61,9 @@ class FakeServer:
                  "CALIBRATE_RESULT_SUMMARY": [("AVE_ERROR", "21.5"),
                                               ("VALID_POINTS", 5)],
                  }.get(ident, [])
+        if ident == "PRODUCT_ID" and self.product:
+            extra = [("VALUE", self.product[0]), ("BUS", "USB3"),
+                     ("RATE", self.product[1])]
         if ident == "ENABLE_SEND_DATA":
             self.sending = a.get("STATE") == "1"
         self._send(element("ACK", [("ID", ident), *extra]))
@@ -113,6 +119,7 @@ def test_remote_backend_streams_and_calibrates():
         assert row[1 + INDEX["EYEZ"]] == 0.6
         assert backend.screen.width == 1280
         assert backend.info["software"] == "Fake 1.0"
+        assert (backend.model, backend.rate) == ("GP3", 60.0)
         view = backend.eye_view()
         assert set(view.eyes) == {"L"} and view.eyes["L"][2] == 20 / 640
 
@@ -135,3 +142,23 @@ def test_remote_backend_streams_and_calibrates():
         assert ("SET", "CALIBRATE_START") in sent
     finally:
         backend.stop()
+
+
+def test_remote_gp3_hd_is_recognised():
+    server = FakeServer(product=("GP3HD", "150"))
+    backend = RemoteBackend(GP3Config(mode="remote", port=server.port))
+    backend.start()
+    try:
+        assert (backend.model, backend.rate) == ("GP3 HD", 150.0)
+        assert backend.info["product"] == "GP3HD"
+    finally:
+        backend.stop()
+
+
+def test_models_and_rates():
+    assert model_from_product("GP3") == "GP3"
+    assert model_from_product("GP3HD") == "GP3 HD"
+    assert model_from_product("") == "GP3"
+    assert nominal_rate("GP3", 150) == 60.0
+    assert nominal_rate("GP3 HD", 150) == 150.0
+    assert nominal_rate("GP3 HD", 60) == 60.0

@@ -38,7 +38,23 @@ UNITS = {name: unit for name, unit, _ in LSL_CHANNELS}
 DESCRIPTIONS = {name: text for name, _, text in LSL_CHANNELS}
 INDEX = {name: i for i, name in enumerate(CHANNELS)}
 CAMERA_SIZE = (752, 480)
+#: The GP3's frame rate.
 RATE = 60.0
+#: The models OpenGP3 drives, and the frame rates each can run at.
+MODELS = ("GP3", "GP3 HD")
+HD_RATES = (150, 60)
+
+
+def nominal_rate(model: str, hd_rate: float = HD_RATES[0]) -> float:
+    """The frame rate a ``model`` runs at: the GP3 always 60 Hz, the GP3 HD
+    at ``hd_rate``."""
+    return float(hd_rate) if model == "GP3 HD" else RATE
+
+
+def model_from_product(product: str) -> str:
+    """The model named by the Open Gaze API's ``PRODUCT_ID`` (``GP3``,
+    ``GP3HD``)."""
+    return "GP3 HD" if "HD" in (product or "").upper() else "GP3"
 
 
 def calibration_points(n: int) -> list[tuple[float, float]]:
@@ -264,6 +280,10 @@ class Backend:
         self.on_error: Callable[[str], None] = lambda message: None
         self.screen = ScreenInfo()
         self.info: dict[str, str] = {}
+        #: The eye tracker's model ("GP3" or "GP3 HD") and frame rate, once
+        #: started.
+        self.model = "GP3"
+        self.rate = RATE
 
     def start(self) -> None:
         raise NotImplementedError
@@ -506,9 +526,11 @@ class LocalBackend(Backend):
             screen, calibration=calibration, smoothing=cfg.smoothing,
             monocular=cfg.monocular or None, auto_gain=cfg.auto_gain,
             input_monitor=False,
-            max_diagonal_in=cfg.max_diagonal_in or None)
+            max_diagonal_in=cfg.max_diagonal_in or None,
+            rate_hz=cfg.hd_rate)
         tracker.start()
         self.tracker = tracker
+        self.model, self.rate = tracker.model, tracker.rate
         self.screen = ScreenInfo(screen.width, screen.height, screen.width_cm,
                                  screen.distance_cm)
         import opengp3
@@ -747,7 +769,7 @@ class RemoteBackend(Backend):
                     return ["" for _ in keys]
             impl, version = get("API_ID", "IMPL", "VALUE")
             (serial,) = get("SERIAL_ID", "VALUE")
-            (product,) = get("PRODUCT_ID", "VALUE")
+            product, rate = get("PRODUCT_ID", "VALUE", "RATE")
             cw, ch = get("CAMERA_SIZE", "WIDTH", "HEIGHT")
             sw, sh = get("SCREEN_SIZE", "WIDTH", "HEIGHT")
             (delay,) = get("CALIBRATE_DELAY", "VALUE")
@@ -755,6 +777,11 @@ class RemoteBackend(Backend):
             valid = get("CALIBRATE_RESULT_SUMMARY", "VALID_POINTS")[0]
             self._calibrated = bool(valid and float(valid) > 0) \
                 if valid else None
+            self.model = model_from_product(product)
+            try:
+                self.rate = float(rate)
+            except ValueError:
+                self.rate = nominal_rate(self.model)
             self.info = {"serial": serial, "product": product,
                          "software": impl or f"Open Gaze API {version}",
                          "server": f"{cfg.host}:{cfg.port}"}

@@ -8,10 +8,13 @@ without installing: "brAIn dump.cmd".
 
 Devices:
 - Unicorn: pair the headset in Settings > Bluetooth & devices first.
-- Gazepoint GP3 on this computer: bind the WinUSB driver to the camera
-  once with Zadig (https://zadig.akeo.ie, "USB 2.0 Digital Imaging
-  Camera", 1E10 2001). Gazepoint Control cannot use the camera while it
-  is bound. A GP3 on another computer needs nothing.
+- Gazepoint GP3 or GP3 HD on this computer: install UsbDk once
+  (https://github.com/daynix/UsbDk/releases, the x64 .msi). It leaves
+  Gazepoint's driver in place, so Gazepoint Control keeps working (not at
+  the same time). Or bind the WinUSB driver with Zadig
+  (https://zadig.akeo.ie; GP3: 1E10 2001; GP3 HD: the composite device
+  1E10 3300), which Gazepoint Control cannot use. An eye tracker on another
+  computer needs nothing.
 - Polar H10: wear the strap; it is found over Bluetooth LE.
 - Shimmer3 GSR+: pair it in Settings > Bluetooth & devices (PIN 1234);
   choose its outgoing COM port in brAIn dump.

@@ -7,9 +7,9 @@ Windows, macOS and Linux:
   HybridBlack source;
 - **g.tec g.HIamp**: high-density EEG (up to 256 channels, 256–4800 Hz),
   through g.Pype's GHIamp source and g.tec's gtec-gds driver;
-- **Gazepoint GP3**: eye tracking, through
-  [OpenGP3](https://github.com/itubrainlab/opengp3), on this computer or on
-  another one over the Open Gaze API;
+- **Gazepoint GP3 and GP3 HD**: eye tracking (60 Hz; the GP3 HD at 150 or
+  60 Hz), through [OpenGP3](https://github.com/itubrainlab/opengp3), on this
+  computer or on another one over the Open Gaze API;
 - **Polar H10**: ECG, heart rate and RR intervals;
 - **Shimmer3 GSR+**: skin conductance and pulse (PPG);
 - **LSL streams**: markers from any Lab Streaming Layer stream, as events;
@@ -147,8 +147,8 @@ the synchronisation of EEG, markers, eyes and the screen (OBS).
 |---|---|---|---|
 | Unicorn | pair it first | found over Bluetooth | found over Bluetooth |
 | g.HIamp | USB, gtec-gds driver | USB, gtec-gds driver | USB, gtec-gds driver |
-| GP3, this computer | WinUSB driver via [Zadig](https://zadig.akeo.ie) once | nothing | a USB rule, installed once (asks for the password) |
-| GP3, remote | nothing | nothing | nothing |
+| GP3 / GP3 HD, this computer | [UsbDk](https://github.com/daynix/UsbDk/releases), installed once (or WinUSB via [Zadig](https://zadig.akeo.ie)) | nothing | a USB rule, installed once (asks for the password) |
+| GP3 / GP3 HD, remote | nothing | nothing | nothing |
 | Polar H10 | Bluetooth LE | Bluetooth LE | Bluetooth LE (BlueZ) |
 | Shimmer3 GSR+ | pair it; its outgoing COM port | pair it; `/dev/cu.Shimmer3-…` | pair it and `rfcomm bind`; `/dev/rfcomm0` |
 | LSL | nothing | nothing | nothing |

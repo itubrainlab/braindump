@@ -131,8 +131,9 @@ class GP3Page(DevicePage):
         conn = ConfigForm("Connection", cfg)
         conn.choice("mode", "GP3", MODES,
                     "On this computer, OpenGP3 drives the camera itself "
-                    "(Windows needs the WinUSB driver, see OpenGP3). On "
-                    "another computer, it runs opengp3 server or Gazepoint "
+                    "(the GP3 or the GP3 HD; Windows needs UsbDk or "
+                    "WinUSB, see OpenGP3). On another computer, it runs "
+                    "opengp3 server or Gazepoint "
                     "Control, and brAIn dump reads it over the network.")
         conn.boolean("simulate", "Simulated", "No hardware: a simulated "
                      "eye tracker")
@@ -168,6 +169,10 @@ class GP3Page(DevicePage):
         tracking.number("calibration_timeout", "Target collection", 0.5, 5,
                         "Seconds of data collected at each target", " s",
                         2, step=0.1)
+        tracking.choice("hd_rate", "GP3 HD rate",
+                        {150: "150 Hz", 60: "60 Hz"},
+                        "The GP3 HD's frame rate. The GP3 always runs at "
+                        "60 Hz.")
         tracking.choice("monocular", "Eyes", {"": "Both",
                                               "L": "Left eye only",
                                               "R": "Right eye only"})
@@ -192,7 +197,7 @@ class GP3Page(DevicePage):
             conn.show_row(attr, remote)
         screen.show_row("display", not remote)
         screen.show_row("max_diagonal_in", not remote)
-        for attr in ("calibration_delay", "calibration_timeout",
+        for attr in ("calibration_delay", "calibration_timeout", "hd_rate",
                      "monocular", "auto_gain", "smoothing"):
             tracking.show_row(attr, not remote)
 
@@ -229,12 +234,15 @@ class GP3Page(DevicePage):
         if d.simulated:
             where = "Simulated eye tracker."
         elif cfg.mode == "remote":
-            where = (f"GP3 at {cfg.host}:{cfg.port}. Targets on "
+            model = backend.model if running and backend else "GP3"
+            where = (f"{model} at {cfg.host}:{cfg.port}. Targets on "
                      + ("this computer's screen."
                         if cfg.remote_calibration_display == "here"
-                        else "the GP3 computer's screen."))
+                        else "the eye tracker computer's screen."))
         else:
-            where = "GP3 on this computer."
+            where = (f"{backend.model}, {backend.rate:g} Hz, on this "
+                     "computer." if running and backend else
+                     "GP3 or GP3 HD on this computer.")
         if running and backend is not None and backend.calibrated is False:
             where += f" <span style='color:{theme.WARNING}'>Not calibrated." \
                      "</span>"

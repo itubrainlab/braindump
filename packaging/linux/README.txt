@@ -12,7 +12,7 @@ this folder without installing: ./braindump
 
 Devices:
 - Unicorn: switch the headset on; brAIn dump finds it over Bluetooth.
-- Gazepoint GP3 on this computer: the first time, OpenGP3 asks once for
+- Gazepoint GP3 or GP3 HD on this computer: the first time, OpenGP3 asks once for
   the administrator password to install a USB rule.
 - Polar H10: wear the strap; it is found over Bluetooth (BlueZ).
 - Shimmer3 GSR+: pair it (bluetoothctl: pair, trust; PIN 1234) and bind a

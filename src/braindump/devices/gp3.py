@@ -28,8 +28,8 @@ from ..pipeline import BidsWriter, PushSource, SweepTap
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget, Timeline,
                    start_time)
-from .gp3_backends import (CHANNELS, DESCRIPTIONS, INDEX, RATE, UNITS,
-                           Backend, CalibrationQuality, LocalBackend,
+from .gp3_backends import (CHANNELS, DESCRIPTIONS, INDEX, MODELS, UNITS,
+                           nominal_rate, Backend, CalibrationQuality, LocalBackend,
                            RemoteBackend, SimulatedBackend)
 
 PORT_OUT = Constants.Defaults.PORT_OUT
@@ -74,6 +74,11 @@ class GP3Config(DeviceConfig):
     monocular: str = ""
     auto_gain: bool = False
     smoothing: bool = True
+    #: The GP3 HD's frame rate, 150 or 60 Hz (the GP3 runs at 60 Hz).
+    hd_rate: int = 150
+    #: The model last connected ("GP3" or "GP3 HD"): the session pipeline
+    #: is laid out for its frame rate before the tracker is opened.
+    model: str = "GP3"
     # the view
     mirror_view: bool = True
     #: The last calibration made here (local mode), relative to the
@@ -88,8 +93,8 @@ class GazeSource(PushSource):
     """The GP3's samples, pushed by its backend: one row per camera
     frame."""
 
-    def __init__(self, **kwargs):
-        super().__init__(CHANNELS, [UNITS[c] for c in CHANNELS], RATE,
+    def __init__(self, rate: float, **kwargs):
+        super().__init__(CHANNELS, [UNITS[c] for c in CHANNELS], rate,
                          **kwargs)
 
 
@@ -232,8 +237,8 @@ class GP3Device(Device):
     NAME = "Gazepoint GP3"
     MANUFACTURER = "Gazepoint"
     MODEL = "GP3"
-    DESCRIPTION = "Eye tracker, 60 Hz, on this computer or over the " \
-                  "Open Gaze API (OpenGP3)"
+    DESCRIPTION = "Eye tracker (GP3 60 Hz, GP3 HD 150 Hz), on this " \
+                  "computer or over the Open Gaze API (OpenGP3)"
     MODALITY = "eyetrack"
     CONFIG = GP3Config
 
@@ -261,7 +266,11 @@ class GP3Device(Device):
     # -- the session pipeline ----------------------------------------------------
 
     def build(self, pipeline: gp.Pipeline) -> None:
-        source = GazeSource(name=self.node_name("source"))
+        cfg = self.config
+        model = cfg.model if cfg.model in MODELS and not self.simulated \
+            else "GP3"
+        source = GazeSource(nominal_rate(model, cfg.hd_rate),
+                            name=self.node_name("source"))
         tap = SweepTap(seconds=10, name=self.node_name("view"))
         writer = EyetrackWriter(self.node_name("bids"))
         pipeline.connect(source, tap)
@@ -275,6 +284,9 @@ class GP3Device(Device):
         backend.start()
         self.backend = backend
         self.calibrations, self.validations = [], []
+        if not self.simulated:
+            # The next connection lays its pipeline out for this model.
+            self.config.model = backend.model
 
     def closing(self) -> None:
         backend, self.backend = self.backend, None
@@ -347,6 +359,8 @@ class GP3Device(Device):
             valid = dict(summary.get("valid") or writer.valid)
             screen = backend.screen if backend else None
             info = dict(backend.info) if backend else {}
+            if backend is not None:
+                info["model"], info["rate"] = backend.model, backend.rate
             kind = backend.kind if backend else ""
 
         def finalize(reference: Optional[Timeline]) -> None:
@@ -383,19 +397,20 @@ class GP3Device(Device):
         software = [f"brAIn dump {__version__}", f"g.Pype {gp.__version__}"]
         if info.get("software"):
             software.append(info["software"])
+        model = info.get("model") or self.MODEL
         common = {
-            "SamplingFrequency": RATE,
+            "SamplingFrequency": info.get("rate") or nominal_rate(model),
             "StartTime": round(start, 6),
             "Manufacturer": self.MANUFACTURER,
-            "ManufacturersModelName": self.MODEL,
+            "ManufacturersModelName": model,
             "DeviceSerialNumber": info.get("serial") or NA,
             "SoftwareVersions": ", ".join(software),
             "TaskName": target.entities.task,
             "RecordingDuration": round(duration, 3),
-            "TrackerSetup": {"local": "GP3 on the recording computer "
+            "TrackerSetup": {"local": f"{model} on the recording computer "
                                       "(OpenGP3 driver)",
-                             "remote": f"GP3 served over the Open Gaze API "
-                                       f"by {info.get('server', '')}",
+                             "remote": f"{model} served over the Open Gaze "
+                                       f"API by {info.get('server', '')}",
                              "simulated": "simulated GP3"}.get(kind, kind),
             "SimulatedDevice": self.simulated,
             **target.common_metadata,
@@ -518,10 +533,11 @@ class GP3Device(Device):
         backend = self.backend
         if self.simulated:
             return "GP3 (simulated)"
+        model = backend.model if backend else "GP3"
         if self.config.mode == "remote":
-            return f"GP3 @ {self.config.host}:{self.config.port}"
+            return f"{model} @ {self.config.host}:{self.config.port}"
         serial = backend.info.get("serial") if backend else ""
-        return f"GP3 {serial}".strip()
+        return f"{model} {serial}".strip()
 
     @property
     def calibrated(self) -> Optional[bool]:
