@@ -3,8 +3,8 @@
 Multi-device recording for the ITU brAIn lab, into a **BIDS** dataset, on
 Windows, macOS and Linux:
 
-- **g.tec Unicorn Hybrid Black**: EEG, through [g.Pype](https://gpype.gtec.at)
-  and [Rhino Recorder](https://github.com/itubrainlab/rhinorecorder)'s nodes;
+- **g.tec Unicorn Hybrid Black**: EEG, through [g.Pype](https://gpype.gtec.at)'s
+  HybridBlack source;
 - **g.tec g.HIamp**: high-density EEG (up to 256 channels, 256–4800 Hz),
   through g.Pype's GHIamp source and g.tec's gtec-gds driver;
 - **Gazepoint GP3**: eye tracking, through
@@ -55,7 +55,7 @@ rest of brAIn dump does without it.
 - **Projects** (`<name>.braindump`): the devices, each one's configuration
   (saved as you change it), the BIDS output folder, the default task and the
   authors. The app opens on a project picker.
-- **UI**: Rhino Recorder's toolbar and viewer, plus a left column listing the
+- **UI**: a toolbar over each device's viewer, plus a left column listing the
   project's devices and the supported ones (add with +, remove with ×).
 - **Unicorn recording filters**: a high-pass, a low-pass and a notch, chosen
   in the Settings from Unicorn Recorder's filters (by default a 0.1 Hz
@@ -89,6 +89,36 @@ rest of brAIn dump does without it.
   physioevents and the run's events with `StimulusPresentation`), with each
   file's start time in `scans.tsv`.
 
+## Architecture: one g.Pype pipeline
+
+The whole recording runs in one [g.Pype](https://gpype.gtec.at) 4.2 pipeline
+(`braindump.pipeline`):
+
+- **Every device is a g.Pype input.** The EEG amplifiers are g.Pype's own
+  sources (HybridBlack for the Unicorn, GHIamp for the g.HIamp); the eye
+  tracker, the Polar strap, the Shimmer, the LSL streams and the videos
+  are `PushSource`s, fed by the device's own thread, one row per sample
+  (a frame's time and number, for video; a marker's time and code, for
+  LSL). The amplifier, when there is one, owns the pipeline's master
+  timeline.
+- **The BIDS output is g.Pype sinks.** Each device's files are written by
+  `BidsWriter`s, g.Pype file writers whose recordings begin and end on two
+  g.Pype actions, `begin` and `end`, which **Record** invokes through
+  `Pipeline.invoke_action`: BDF for EEG, gzipped TSV for physio and eye
+  tracking, MP4 for video. Channels are named and chosen with g.Pype's
+  ChannelLabeler and ChannelSelector, and the EEG's recording filters are
+  g.Pype GenericFilters.
+- **Connecting** a device builds its nodes into the pipeline. A running
+  g.Pype pipeline cannot gain or lose nodes, so connecting or
+  disconnecting one device restarts the pipeline (not while recording),
+  and **Connect all** starts it once with every device. When one device
+  fails, the pipeline stops, and with it every device.
+
+The data viewers' taps and the live-swappable view filters are brAIn
+dump's own g.Pype nodes (g.Pype's filters can be bypassed while running,
+but not retuned); the simulated Unicorn is g.Pype's HybridBlack on a
+stand-in for its driver.
+
 ## Synchronisation
 
 Every device is time-stamped on one monotonic clock of the recording
@@ -96,9 +126,13 @@ computer. The EEG's first-sample time and its real sampling rate are
 measured from every sample's acquisition time (`RecordingTiming` in
 `_eeg.json`), and event onsets and `StartTime`s are given in the EEG's own
 time through that rate, so they stay on the right EEG sample even as the
-headset's clock drifts. A test sends a UDP trigger (placed by g.Pype) and
-an LSL marker (placed by brAIn dump) at the same instant and checks they
-land on the same EEG sample.
+headset's clock drifts. g.Pype gives each stream its own sample grid, so
+how the grids line up is measured on top of it: every source keeps each
+sample's acquisition time (the amplifiers' corrected for Bluetooth bursts
+and the link's delay, which is also the time g.Pype places triggers by).
+A test sends a UDP trigger (placed by g.Pype) and an LSL marker (placed
+by brAIn dump) at the same instant and checks they land on the same EEG
+sample.
 
 ## Validating a setup
 

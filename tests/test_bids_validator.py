@@ -12,6 +12,7 @@ import time
 
 import pytest
 
+from conftest import connect_all
 from braindump.devices import make_device
 from braindump.devices.hiamp import _simulated_filters, amplifier_filter
 from braindump.project import Project
@@ -39,8 +40,7 @@ def test_recorded_dataset_is_valid(tmp_path):
         amp_notch=known["notch"][0]["index"])
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
-    for d in devices:
-        d.start()
+    pipeline = connect_all(devices)
     try:
         time.sleep(2.5)  # the LSL test stream is found and sends
         gp3 = next(d for d in devices if d.TYPE == "gp3")
@@ -64,8 +64,7 @@ def test_recorded_dataset_is_valid(tmp_path):
         time.sleep(1.5)
         assert not session.stop().problems
     finally:
-        for d in devices:
-            d.stop()
+        pipeline.stop()
     out = subprocess.run([VALIDATOR, str(project.output_path), "--json"],
                          capture_output=True, text=True, timeout=300)
     report = json.loads(out.stdout)

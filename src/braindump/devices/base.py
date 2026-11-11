@@ -1,13 +1,22 @@
-"""What every device brAIn dump records has in common."""
+"""What every device brAIn dump records has in common.
+
+Every device is an input of the session pipeline (:mod:`braindump.pipeline`):
+it builds its g.Pype nodes into it (:meth:`Device.build`), and connecting
+or disconnecting it restarts that pipeline.
+"""
 from __future__ import annotations
 
 import threading
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, ClassVar, Optional
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Optional
 
 from ..bids import Dataset, Entities
+
+if TYPE_CHECKING:  # pragma: no cover
+    import gpype as gp
+    from ..pipeline.session import SessionPipeline
 
 IDLE, STARTING, RUNNING, STOPPING = "idle", "starting", "running", "stopping"
 
@@ -131,11 +140,19 @@ class RecordedFiles:
 
 
 class Device:
-    """A recording device: connects, acquires, and records into BIDS.
+    """A recording device: an input of the session pipeline, recorded into
+    BIDS.
 
-    :meth:`start`, :meth:`stop` and the recording calls block, so a user
-    interface calls them off its main thread. The ``on_*`` callbacks may
-    be called from any thread.
+    A device builds its g.Pype nodes into the session pipeline
+    (:meth:`build`): its source, the taps its page draws from, and its
+    BIDS writers, whose ``begin`` and ``end`` actions record. Its own
+    thread, if it has one (a Bluetooth link, a camera), starts once the
+    pipeline runs (:meth:`opened`) and stops before it does
+    (:meth:`closing`).
+
+    :meth:`start` (connect), :meth:`stop` (disconnect) and the recording
+    calls block, so a user interface calls them off its main thread. The
+    ``on_*`` callbacks may be called from any thread.
     """
 
     TYPE: ClassVar[str] = ""
@@ -154,9 +171,36 @@ class Device:
         self.state = IDLE
         self.error: Optional[str] = None
         self._lock = threading.RLock()
+        self._session: Optional["SessionPipeline"] = None
+        #: The device's nodes in the running pipeline (its own dataclass);
+        #: None while it is not connected.
+        self.graph: Any = None
         self.on_state: Callable[[str], None] = lambda state: None
         self.on_error: Callable[[str], None] = lambda message: None
 
+    # -- the session pipeline ----------------------------------------------------
+
+    @property
+    def session(self) -> "SessionPipeline":
+        """The session pipeline this device connects into: the project's
+        (see :meth:`attach`), or one of its own."""
+        if self._session is None:
+            from ..pipeline.session import SessionPipeline
+            self._session = SessionPipeline()
+        return self._session
+
+    def attach(self, session: "SessionPipeline") -> None:
+        """Connect into ``session`` from now on."""
+        self._session = session
+
+    def node_name(self, part: str) -> str:
+        """The name of one of this device's g.Pype nodes; the session
+        finds the device a failing node belongs to by it."""
+        return f"{self.TYPE}_{part}"
+
+    def invoke(self, node, action: str, arg: Optional[dict] = None):
+        """Run one of this device's nodes' g.Pype actions."""
+        return self.session.invoke(node, action, arg)
     @property
     def simulated(self) -> bool:
         return self.force_simulate or bool(getattr(self.config, "simulate",
@@ -175,24 +219,39 @@ class Device:
         self.on_state(state)
 
     def _fail(self, message: str) -> None:
-        """The device stopped on its own, on an error."""
+        """The device stopped on its own, on an error: the session
+        pipeline stops (from any thread)."""
         self.error = message
-
-        def work():
-            try:
-                self.stop()
-            except Exception:  # noqa: BLE001
-                pass
+        if self._session is not None and self in self._session.devices:
+            self._session.fail(self, message)
+        else:
             self.on_error(message)
-        threading.Thread(target=work, daemon=True).start()
+
+    def start(self) -> None:
+        """Connect: join the session pipeline (which restarts)."""
+        self.session.connect([self])
+
+    def stop(self) -> None:
+        """Disconnect: leave the session pipeline."""
+        if self._session is not None:
+            self._session.disconnect([self])
 
     # -- to implement --------------------------------------------------------
 
-    def start(self) -> None:
+    def build(self, pipeline: "gp.Pipeline") -> None:
+        """Add this device's nodes to ``pipeline`` (not yet started), and
+        keep them in :attr:`graph`."""
         raise NotImplementedError
 
-    def stop(self) -> None:
-        raise NotImplementedError
+    def opened(self) -> None:
+        """The pipeline runs: start the device's own thread, if any."""
+
+    def closing(self) -> None:
+        """The pipeline is about to stop: stop the device's own thread."""
+
+    def closed(self) -> None:
+        """The pipeline has stopped."""
+        self.graph = None
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
         """Start writing; returns the data files it writes."""

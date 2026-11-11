@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pytest
 
+from conftest import connect_all
 from braindump.bids import read_tsv
 from braindump.devices import make_device
 from braindump.project import Project
@@ -16,8 +17,7 @@ from braindump.recording import Session, Subject
 
 
 def _record(project, devices, seconds=2.5, task="watch", warmup=1.0):
-    for d in devices:
-        d.start()
+    pipeline = connect_all(devices)
     try:
         time.sleep(warmup)
         session = Session(project, devices)
@@ -25,8 +25,7 @@ def _record(project, devices, seconds=2.5, task="watch", warmup=1.0):
         time.sleep(seconds)
         return session.stop()
     finally:
-        for d in devices:
-            d.stop()
+        pipeline.stop()
 
 
 def test_simulated_webcam_with_eeg(tmp_path):
@@ -107,8 +106,8 @@ def test_obs_over_ndi(tmp_path):
             session = Session(project, [obs])
             session.start(Subject(sub="01", task="game"))
             deadline = time.time() + 20
-            while time.time() < deadline and (
-                    obs._recording is None or obs._recording.count < 15):
+            while time.time() < deadline and \
+                    getattr(obs.graph.writer, "count", 0) < 15:
                 time.sleep(0.1)
             result = session.stop()
         finally:

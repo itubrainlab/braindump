@@ -7,7 +7,7 @@
 # git and the project's .venv (pip install -e ".[test,shimmer]").
 #
 # The package carries its own Python (python-build-standalone's Windows
-# build, which uv downloads) and the wheels of brAIn dump, Rhino Recorder
+# build, which uv downloads) and the wheels of brAIn dump
 # and OpenGP3; see ../common.sh.
 set -euo pipefail
 

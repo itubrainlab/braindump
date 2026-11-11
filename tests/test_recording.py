@@ -6,6 +6,7 @@ import time
 
 import pyedflib
 
+from conftest import connect_all
 from braindump.bids import read_tsv
 from braindump.devices import make_device
 from braindump.project import Project
@@ -18,8 +19,7 @@ def test_session_records_both_devices(tmp_path):
     project.add_device("gp3", {"simulate": True})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
-    for d in devices:
-        d.start()
+    pipeline = connect_all(devices)
     try:
         time.sleep(1.0)
         session = Session(project, devices)
@@ -31,8 +31,7 @@ def test_session_records_both_devices(tmp_path):
         time.sleep(2.5)
         result = session.stop()
     finally:
-        for d in devices:
-            d.stop()
+        pipeline.stop()
     assert not result.problems
     root = project.output_path
     eeg = root / "sub-01/ses-1/eeg"

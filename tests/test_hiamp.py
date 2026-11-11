@@ -6,6 +6,7 @@ import time
 import numpy as np
 import pyedflib
 
+from conftest import connect_all
 from braindump.bids import read_tsv
 from braindump.devices import make_device
 from braindump.project import Project
@@ -58,8 +59,7 @@ def test_two_eeg_amplifiers_get_their_own_acq(tmp_path):
     project.add_device("hiamp", {"simulate": True, "channel_count": 8})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
-    for d in devices:
-        d.start()
+    pipeline = connect_all(devices)
     try:
         time.sleep(1.0)
         session = Session(project, devices)
@@ -67,8 +67,7 @@ def test_two_eeg_amplifiers_get_their_own_acq(tmp_path):
         time.sleep(2.5)
         result = session.stop()
     finally:
-        for d in devices:
-            d.stop()
+        pipeline.stop()
     assert not result.problems
     eeg = project.output_path / "sub-01" / "eeg"
     for acq in ("unicorn", "hiamp"):

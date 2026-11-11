@@ -2,8 +2,8 @@
 
     pythonw.exe -I launcher.py [braindump options]
 
-The folder carries its own Python and the wheels of brAIn dump, Rhino
-Recorder and OpenGP3, but not g.Pype or g.tec's gtec-unicorn driver: their
+The folder carries its own Python and the wheels of brAIn dump and
+OpenGP3, but not g.Pype or g.tec's gtec-unicorn driver: their
 licences do not allow them in a bundle. On first launch, and after an
 update, bootstrap.py installs them and the other libraries from PyPI into
 %LOCALAPPDATA%\\brAIn dump\\runtime.

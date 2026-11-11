@@ -5,7 +5,7 @@ amplifier with g.tec's gtec-gds driver (Windows, Linux and macOS)::
 
     GHIamp ─┬─ SweepTap "raw"                       (raw view)
             ├─ Filter ─ Notch ─ SweepTap "scope"    (filtered view)
-            └─ BidsBdfLogger                        (BIDS, while recording)
+            └─ BdfWriter                            (BIDS, while recording)
 
 The EEG is recorded through the **amplifier's own filters**: a band-pass
 and a notch, chosen in the settings from those the driver lists for the
@@ -19,7 +19,7 @@ as for the Unicorn: its first sample's time and the amplifier's real
 rate, the time base the other devices are given in.
 
 A simulated amplifier (``simulate``) runs g.Pype's real GHIamp source on
-a stand-in for the driver, as Rhino Recorder simulates the Unicorn.
+a stand-in for the driver, as the Unicorn is simulated.
 """
 from __future__ import annotations
 
@@ -37,14 +37,14 @@ from typing import Optional
 import gpype as gp
 import numpy as np
 from gpype.backend.sources.g_hiamp import GHIamp
-from rhinorecorder import presets
-from rhinorecorder.nodes import EegFilter, SweepTap
 
 from .. import __version__, clock
 from ..bids import NA, write_json, write_tsv
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    Event, RecordedFiles, RecordingTarget, Timeline)
-from .eeg import (SIGNAL, TRIGGER, BidsBdfLogger, TimingFit,
+from .. import presets
+from ..pipeline import BdfWriter, SweepTap, ViewFilter
+from .eeg import (SIGNAL, TRIGGER, TimingFit,
                   channel_filter_columns, fit_timing)
 
 #: Sampling rates offered, and the block size (scans) the driver
@@ -448,13 +448,13 @@ def _close(source) -> None:
 
 @dataclass
 class Graph:
-    pipeline: gp.Pipeline
+    """The amplifier's nodes in the session pipeline."""
     source: StampedGHIamp
     raw: SweepTap
     scope: SweepTap
-    bandpass: EegFilter
-    notch: EegFilter
-    logger: BidsBdfLogger
+    bandpass: ViewFilter
+    notch: ViewFilter
+    writer: BdfWriter
     #: The amplifier's band-pass and notch in use (None for none).
     amp_bandpass: Optional[dict] = None
     amp_notch: Optional[dict] = None
@@ -480,11 +480,11 @@ class HIampDevice(Device):
     def rate(self) -> float:
         return float(self.config.sampling_rate)
 
-    # -- acquisition -------------------------------------------------------
+    # -- the session pipeline ---------------------------------------------
 
-    def build(self) -> Graph:
+    def build(self, p: gp.Pipeline) -> None:
+        """g.Pype's GHIamp opens the amplifier as it is built."""
         cfg = self.config
-        cls = SimulatedGHIamp if self.simulated else StampedGHIamp
         rate = int(cfg.sampling_rate)
         # Checked before the amplifier opens: a filter that cannot apply
         # stops the connection rather than record something else.
@@ -504,22 +504,24 @@ class HIampDevice(Device):
             source = self._open(
                 bandpass_index=amp_bandpass["index"],
                 notch_index=amp_notch["index"] if amp_notch else NO_FILTER)
-        p = gp.Pipeline()
-        raw = SweepTap(seconds=10, name="raw")
+        raw = SweepTap(seconds=10, name=self.node_name("raw"))
         p.connect(source, raw)
-        bandpass = EegFilter(presets.filter_sos(cfg.view_filter, rate),
-                             name="filter")
-        notch = EegFilter(presets.notch_sos(cfg.view_notch, rate),
-                          name="notch")
+        bandpass = ViewFilter(presets.filter_sos(cfg.view_filter, rate),
+                             name=self.node_name("view_filter"))
+        notch = ViewFilter(presets.notch_sos(cfg.view_notch, rate),
+                          name=self.node_name("view_notch"))
         p.connect(source, bandpass)
         p.connect(bandpass, notch)
-        scope = SweepTap(seconds=10, name="scope")
+        scope = SweepTap(seconds=10, name=self.node_name("scope"))
         p.connect(notch, scope)
-        logger = BidsBdfLogger(cfg.electrodes, cfg.latency_ms,
-                               name="bids_bdf")
-        p.connect(source, logger)
-        return Graph(p, source, raw, scope, bandpass, notch, logger,
-                     amp_bandpass, amp_notch)
+        writer = BdfWriter(self.node_name("bids"))
+        p.connect(source, writer)
+        self.graph = Graph(source, raw, scope, bandpass, notch, writer,
+                           amp_bandpass, amp_notch)
+
+    def closed(self) -> None:
+        self.graph = None
+        self._target = None
 
     def _open(self, **filters) -> StampedGHIamp:
         """g.Pype's GHIamp source on the amplifier (or the simulated
@@ -528,10 +530,12 @@ class HIampDevice(Device):
         cls = SimulatedGHIamp if self.simulated else StampedGHIamp
         rate = int(cfg.sampling_rate)
         return cls(serial=cfg.serial or None, sampling_rate=rate,
-                   channel_count=cfg.channel_count or None,
+                   channel_selection=(range(int(cfg.channel_count))
+                                      if cfg.channel_count else None),
                    frame_size=RATES.get(rate),
                    enable_di=bool(cfg.digital_input),
-                   latency_ms=cfg.latency_ms, name="hiamp", **filters)
+                   latency_ms=cfg.latency_ms,
+                   name=self.node_name("source"), **filters)
 
     def load_filters(self) -> dict[str, list[dict]]:
         """Asks the amplifier which filters it offers at the sampling
@@ -555,52 +559,6 @@ class HIampDevice(Device):
                                    f"{int(self.config.sampling_rate)} Hz.")
             self.config.learn_filters(found)
             return found
-
-    def start(self) -> None:
-        with self._lock:
-            if self.state != IDLE:
-                return
-            self.error = None
-            self._set_state(STARTING)
-            graph = None
-            try:
-                graph = self.build()
-                graph.pipeline.add_error_handler(self._pipeline_failed)
-                graph.pipeline.start()
-            except BaseException:
-                if graph is not None:
-                    try:
-                        graph.pipeline.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
-                self._set_state(IDLE)
-                raise
-            self.graph = graph
-            self._set_state(RUNNING)
-
-    def stop(self) -> None:
-        with self._lock:
-            graph = self.graph
-            if graph is None:
-                return
-            self._set_state(STOPPING)
-            try:
-                if self.recording:
-                    self.end_recording()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                graph.pipeline.stop()
-            finally:
-                self.graph = None
-                self._set_state(IDLE)
-
-    def _pipeline_failed(self, entry) -> None:
-        try:
-            message = str(entry["message"])
-        except Exception:  # noqa: BLE001
-            message = str(entry)
-        self._fail(message)
 
     # -- live view settings ------------------------------------------------
 
@@ -639,7 +597,7 @@ class HIampDevice(Device):
     @property
     def recording(self) -> bool:
         graph = self.graph
-        return bool(graph and graph.logger.recording)
+        return bool(graph and graph.writer.recording)
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
         with self._lock:
@@ -648,31 +606,28 @@ class HIampDevice(Device):
                 raise RuntimeError("The g.HIamp is not acquiring.")
             path = target.dataset.path(target.entities, target.datatype,
                                        "eeg", ".bdf")
-            logger = graph.logger
-            logger.subject_id = f"sub-{target.entities.sub}"
-            logger.recording_id = target.entities.stem()
-            logger.device_serial = self.identity()
-            logger.begin(str(path), logger.seen + max(8, int(self.rate / 10)))
+            self.invoke(graph.writer, "begin", {
+                "path": str(path),
+                "meta": {"electrodes": list(self.config.electrodes or []),
+                         "subject": f"sub-{target.entities.sub}",
+                         "recording": target.entities.stem(),
+                         "serial": self.identity()}})
             self._target = target
             return [path]
 
     def end_recording(self) -> RecordedFiles:
         with self._lock:
             graph, target = self.graph, self._target
-            if graph is None or target is None or not graph.logger.recording:
+            if graph is None or target is None or not graph.writer.recording:
                 return RecordedFiles()
-            logger = graph.logger
-            logger.end(logger.seen + max(8, int(self.rate / 10)))
-            deadline = time.monotonic() + 2.0
-            while logger.recording and time.monotonic() < deadline:
-                time.sleep(0.01)
-            logger.end()
+            writer = graph.writer
+            summary = self.invoke(writer, "end")
             self._target = None
-            path = Path(logger.path)
-            samples = logger.samples_written
-            events = list(logger.events)
-            labels, roles = list(logger.labels), list(logger.roles)
-            timing = self._timing(graph.source, logger, samples)
+            path = Path(writer.path)
+            samples = int(summary.get("samples") or 0)
+            events = list(writer.events)
+            labels, roles = list(writer.file_labels), list(writer.roles)
+            timing = self._timing(graph.source, writer, samples)
             filters = (graph.amp_bandpass, graph.amp_notch)
 
         def finalize(reference: Optional[Timeline]) -> None:
@@ -691,12 +646,12 @@ class HIampDevice(Device):
             files=[path, *sidecars], first_sample=first, finalize=finalize,
             samples=samples, events=triggers, timeline=timing.timeline)
 
-    def _timing(self, source, logger: BidsBdfLogger,
+    def _timing(self, source, writer: BdfWriter,
                 samples: int) -> TimingFit:
         nominal = self.rate
-        fallback = TimingFit(Timeline(logger.first_arrival or clock.now(),
+        fallback = TimingFit(Timeline(clock.now() - samples / nominal,
                                       nominal, nominal), method="arrival")
-        start = logger.start_index
+        start = writer.start_index
         if start is None or samples == 0 or not hasattr(source, "stamps"):
             return fallback
         acquired = source.stamps()

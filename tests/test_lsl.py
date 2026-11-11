@@ -3,6 +3,7 @@ import time
 
 import pylsl
 
+from conftest import connect_all
 from braindump.bids import read_tsv
 from braindump.devices import make_device
 from braindump.devices.lsl import matches
@@ -25,8 +26,7 @@ def test_markers_become_events(tmp_path):
     project.add_device("lsl", {"streams": [{"name": "BrainDumpTestStim"}]})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
-    for d in devices:
-        d.start()
+    pipeline = connect_all(devices)
     lsl = devices[1]
     try:
         deadline = time.time() + 10
@@ -46,8 +46,7 @@ def test_markers_become_events(tmp_path):
         time.sleep(0.5)
         result = session.stop()
     finally:
-        for d in devices:
-            d.stop()
+        pipeline.stop()
     assert not result.problems
     events = project.output_path / "sub-01/eeg/" \
         "sub-01_task-oddball_run-1_events.tsv"

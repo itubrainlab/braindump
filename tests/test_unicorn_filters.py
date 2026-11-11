@@ -6,9 +6,9 @@ import time
 
 import numpy as np
 import pyedflib
-from rhinorecorder import presets
 from scipy import signal
 
+from braindump import presets
 from braindump.bids import read_tsv
 from braindump.devices import make_device
 from braindump.devices.unicorn import (HIGHPASS, LOWPASS, NYQUIST,

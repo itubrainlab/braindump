@@ -9,8 +9,17 @@ computer's clock), ``trial_type`` the stream's name, ``value`` the
 sample. The recording session merges them with the other devices'
 events into the run's ``_events.tsv``.
 
-pylsl is used directly rather than g.Pype's LslReceiver, because g.Pype
-carries float32 samples and marker streams are usually strings.
+The samples enter the session pipeline through a :class:`MarkerSource`::
+
+    MarkerSource ── EventLog   (the events, while recording)
+
+g.Pype's own LslReceiver does not fit marker streams: g.Pype carries
+float32, and markers are usually strings; it drops LSL's time stamps; and
+it gives up when a stream is not on the network within seconds, while a
+stimulus program may start long after brAIn dump. So the streams are
+pulled with pylsl, and each sample enters the pipeline as a row: its time
+on brAIn dump's clock, and a code standing for its stream and text
+(:attr:`LslDevice.codes`).
 """
 from __future__ import annotations
 
@@ -21,7 +30,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import gpype as gp
+
 from .. import clock
+from ..pipeline import EventLog, PushSource
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    Event, RecordedFiles, RecordingTarget)
 
@@ -74,6 +86,21 @@ def find_streams(timeout: float = 1.0) -> list[dict]:
 
 _FORMATS = {1: "float32", 2: "double64", 3: "string", 4: "int32",
             5: "int16", 6: "int8", 7: "int64"}
+
+
+class MarkerSource(PushSource):
+    """The LSL samples, one row each: ``[time, code]``. Irregular: the
+    declared rate (one a second) only describes the stream to g.Pype."""
+
+    def __init__(self, **kwargs):
+        super().__init__(["CODE"], [""], 1.0, **kwargs)
+
+
+@dataclass
+class Graph:
+    """The LSL device's nodes in the session pipeline."""
+    source: MarkerSource
+    log: EventLog
 
 
 class _Inlet:
@@ -149,11 +176,15 @@ class LslDevice(Device):
                  simulate: bool = False):
         super().__init__(config, project_folder, simulate)
         self.inlets: dict[str, _Inlet] = {}
+        self.graph: Optional[Graph] = None
         #: The latest events, newest last, for the view.
         self.log: deque[Event] = deque(maxlen=500)
         self.received = 0
-        self._recorded: list[Event] = []
-        self._record_from: Optional[float] = None
+        #: What each code in the pipeline stands for: (trial_type, value,
+        #: source), in the order first seen.
+        self.codes: list[tuple[str, str, str]] = []
+        self._code_of: dict[tuple[str, str, str], int] = {}
+        self._target: Optional[RecordingTarget] = None
         self._events_lock = threading.Lock()
         self._running = False
         self._resolver: Optional[threading.Thread] = None
@@ -179,47 +210,41 @@ class LslDevice(Device):
             self._offset_at = now
         return self._offset
 
-    # -- acquisition -----------------------------------------------------------
+    # -- the session pipeline ----------------------------------------------------
 
-    def start(self) -> None:
-        with self._lock:
-            if self.state != IDLE:
-                return
-            self.error = None
-            self._set_state(STARTING)
-            try:
-                import pylsl  # noqa: F401 - fail here if liblsl is missing
-                self._offset_at = 0.0
-                self.clock_offset()
-                if self.simulated:
-                    self._start_simulation()
-            except BaseException:
-                self._set_state(IDLE)
-                raise
-            self._running = True
-            self._resolver = threading.Thread(target=self._resolve,
-                                              daemon=True, name="lsl-resolve")
-            self._resolver.start()
-            self._set_state(RUNNING)
+    def build(self, pipeline: gp.Pipeline) -> None:
+        import pylsl  # noqa: F401 - fail here if liblsl is missing
+        source = MarkerSource(name=self.node_name("source"))
+        log = EventLog(self.node_name("events"))
+        pipeline.connect(source, log)
+        self.graph = Graph(source, log)
 
-    def stop(self) -> None:
-        with self._lock:
-            if self.state == IDLE:
-                return
-            self._set_state(STOPPING)
-            self._record_from = None
-            self._running = False
-            if self._resolver:
-                self._resolver.join(timeout=3.0)
-                self._resolver = None
-            for inlet in list(self.inlets.values()):
-                inlet.close()
-            self.inlets = {}
-            self._outlet = None
-            if self._sim_thread:
-                self._sim_thread.join(timeout=1.0)
-                self._sim_thread = None
-            self._set_state(IDLE)
+    def opened(self) -> None:
+        self._offset_at = 0.0
+        self.clock_offset()
+        if self.simulated:
+            self._start_simulation()
+        self._running = True
+        self._resolver = threading.Thread(target=self._resolve, daemon=True,
+                                          name="lsl-resolve")
+        self._resolver.start()
+
+    def closing(self) -> None:
+        self._running = False
+        if self._resolver:
+            self._resolver.join(timeout=3.0)
+            self._resolver = None
+        for inlet in list(self.inlets.values()):
+            inlet.close()
+        self.inlets = {}
+        self._outlet = None
+        if self._sim_thread:
+            self._sim_thread.join(timeout=1.0)
+            self._sim_thread = None
+
+    def closed(self) -> None:
+        self.graph = None
+        self._target = None
 
     def _selectors(self) -> list[dict]:
         selectors = [s for s in self.config.streams if isinstance(s, dict)]
@@ -255,9 +280,14 @@ class LslDevice(Device):
         with self._events_lock:
             self.received += 1
             self.log.append(event)
-            if self._record_from is not None and \
-                    event.time >= self._record_from:
-                self._recorded.append(event)
+            key = (event.trial_type, event.value, event.source)
+            code = self._code_of.get(key)
+            if code is None:
+                code = self._code_of[key] = len(self.codes)
+                self.codes.append(key)
+        graph = self.graph
+        if graph is not None:
+            graph.source.push([event.time, code])
 
     # -- simulation ----------------------------------------------------------------
 
@@ -283,20 +313,40 @@ class LslDevice(Device):
 
     @property
     def recording(self) -> bool:
-        return self._record_from is not None
+        graph = self.graph
+        return bool(graph and graph.log.recording)
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
-        with self._events_lock:
-            self._recorded = []
-            self._record_from = target.started
+        with self._lock:
+            graph = self.graph
+            if graph is None:
+                raise RuntimeError("LSL is not started.")
+            self.invoke(graph.log, "begin",
+                        {"meta": {"epoch": graph.source.epoch}})
+            self._target = target
         return []
 
     def end_recording(self) -> RecordedFiles:
-        # Samples sent just before now may still be on their way.
-        time.sleep(0.3)
+        with self._lock:
+            graph, target = self.graph, self._target
+            if graph is None or target is None:
+                return RecordedFiles()
+            # Samples sent just before now may still be on their way.
+            time.sleep(0.3)
+            self.invoke(graph.log, "end")
+            self._target = None
+            rows = list(graph.log.rows)
         with self._events_lock:
-            events, self._recorded = self._recorded, []
-            self._record_from = None
+            codes = list(self.codes)
+        events = []
+        for t, values in rows:
+            # Sent before Record was pressed, but arrived after: not this
+            # recording's.
+            if t < target.started:
+                continue
+            trial_type, value, source = codes[int(round(values[0]))]
+            events.append(Event(time=t, trial_type=trial_type, value=value,
+                                source=source))
         return RecordedFiles(events=sorted(events, key=lambda e: e.time),
                              samples=len(events))
 

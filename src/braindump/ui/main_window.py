@@ -1,5 +1,5 @@
-"""brAIn dump's main window: Rhino Recorder's layout, a toolbar over a
-viewer, with a column of the project's devices on the left."""
+"""brAIn dump's main window: a toolbar over a viewer, with a column of the
+project's devices on the left."""
 from __future__ import annotations
 
 import threading
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QMainWindow, QMessageBox,
 
 from .. import APP_NAME, __version__
 from ..devices import DEVICE_TYPES, make_device
+from ..pipeline import SessionPipeline
 from ..devices.base import IDLE, RUNNING, STARTING, Device
 from ..project import Project
 from ..recording import RecordingResult, Session
@@ -63,7 +64,7 @@ behavioural data, under <code>beh/</code>, in BIDS physio
 right, <code>recording-gaze</code> every GP3 channel), with fixations and
 blinks in <code>_physioevents</code>. <code>scans.tsv</code> holds each
 file's start time, to the microsecond, on this computer's clock.</p>
-<p>Built on g.Pype, Rhino Recorder and OpenGP3. g.Pype and the Unicorn
+<p>Built on g.Pype and OpenGP3. g.Pype and the Unicorn
 driver are under g.tec's non-commercial licence.</p>"""
 
 
@@ -84,6 +85,8 @@ class MainWindow(QMainWindow):
         self.simulate = simulate
         self.devices: dict[str, Device] = {}
         self.pages: dict[str, DevicePage] = {}
+        #: The one g.Pype pipeline every connected device is part of.
+        self.pipeline = SessionPipeline()
         self.session: Optional[Session] = None
         self.record_started: Optional[float] = None
         self._pending_record = False
@@ -207,6 +210,7 @@ class MainWindow(QMainWindow):
     def _create_device(self, key: str) -> None:
         device = make_device(key, self.project.devices[key],
                              self.project.folder, self.simulate)
+        device.attach(self.pipeline)
         device.on_state = lambda state, k=key: self.relay.state.emit(k, state)
         device.on_error = lambda message, k=key: self.relay.error.emit(
             k, message)
@@ -316,9 +320,23 @@ class MainWindow(QMainWindow):
         self._in_thread(device.stop)
 
     def connect_all(self) -> None:
-        for key, device in self.devices.items():
-            if device.state == IDLE:
-                self.connect_device(key)
+        """Every idle device into the session pipeline, which starts once
+        with all of them."""
+        idle = [d for d in self.devices.values() if d.state == IDLE]
+        if not idle:
+            return
+
+        def done(result):
+            if isinstance(result, Exception):
+                self._pending_record = False
+                device = getattr(result, "device", None)
+                name = device.NAME if device is not None else "a device"
+                QMessageBox.critical(
+                    self, APP_NAME,
+                    f"Could not connect {name}, so nothing was connected:"
+                    f"\n\n{result}")
+            self._after_connect()
+        self._in_thread(lambda: self.pipeline.connect(idle), done)
 
     def _after_connect(self):
         if self._pending_record and not any(
@@ -340,7 +358,10 @@ class MainWindow(QMainWindow):
         if self.session is not None and self.session.active and \
                 not any(d.recording for d in self.devices.values()):
             self._finish_recording()
-        QMessageBox.critical(self, name, f"The {name} stopped:\n\n{message}")
+        QMessageBox.critical(
+            self, name,
+            f"The {name} stopped, and with it every device (they share one "
+            f"g.Pype pipeline): connect again to go on.\n\n{message}")
 
     # -- recording -------------------------------------------------------------
 
@@ -457,8 +478,7 @@ class MainWindow(QMainWindow):
 
     def _stop_clicked(self):
         def disconnect():
-            for key in self.devices:
-                self.disconnect_device(key)
+            self._in_thread(self.pipeline.stop)
         self.stop_recording(then=disconnect)
 
     # -- timers ----------------------------------------------------------------
@@ -520,11 +540,10 @@ class MainWindow(QMainWindow):
             self.session.stop()
         self.view_timer.stop()
         self.status_timer.stop()
-        for device in self.devices.values():
-            try:
-                device.stop()
-            except Exception:  # noqa: BLE001
-                pass
+        try:
+            self.pipeline.stop()
+        except Exception:  # noqa: BLE001
+            pass
         for key, device in self.devices.items():
             self._save_config(key)
         event.accept()

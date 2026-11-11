@@ -1,11 +1,11 @@
 """The Gazepoint GP3 eye tracker, through OpenGP3 and g.Pype.
 
 Whatever the backend (this computer, another one over the Open Gaze API,
-or simulated; see :mod:`.gp3_backends`), its samples enter a g.Pype
+or simulated; see :mod:`.gp3_backends`), its samples enter the session
 pipeline through :class:`GazeSource`::
 
     GazeSource ─┬─ SweepTap        (the gaze view)
-                └─ EyetrackLogger  (BIDS physio files, while recording)
+                └─ EyetrackWriter  (BIDS physio files, while recording)
 """
 from __future__ import annotations
 
@@ -21,12 +21,10 @@ from typing import Optional
 import gpype as gp
 import numpy as np
 from gpype.common.constants import Constants
-from rhinorecorder.nodes import GatedLogger, SweepTap
-from rhinorecorder.recorder import GATE_MARGIN
 
 from .. import __version__
 from ..bids import NA, GzipTsvWriter, write_json
-from .push import PushSource
+from ..pipeline import BidsWriter, PushSource, SweepTap
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget, Timeline,
                    start_time)
@@ -104,16 +102,18 @@ EYE_COLUMNS = ["timestamp", "x_coordinate", "y_coordinate", "pupil_size",
 EVENT_COLUMNS = ["onset", "duration", "trial_type", "blink", "message"]
 
 
-class EyetrackLogger(GatedLogger):
+class EyetrackWriter(BidsWriter):
     """Writes the BIDS eye-tracking files while a recording is open: one
     physio file per eye, one with every GP3 channel, and the fixations
-    and blinks as physioevents. Uses Rhino Recorder's gated logger, so a
-    recording starts and ends at a sample."""
+    and blinks as physioevents. A g.Pype writer of brAIn dump's
+    (:class:`~braindump.pipeline.writers.BidsWriter`): the session begins
+    and ends it, at a sample, with its ``begin`` and ``end`` actions;
+    ``meta`` gives the source's epoch and the screen's size in pixels."""
 
     extension = ".tsv.gz"
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
         self.epoch = 0.0
         self.screen = (1920, 1080)
         self.first_sample: Optional[float] = None
@@ -139,7 +139,9 @@ class EyetrackLogger(GatedLogger):
                 "_physio.", "_physioevents.")),
         }
 
-    def _open_file(self, path):
+    def _open(self, path, meta):
+        self.epoch = float(meta.get("epoch", 0.0))
+        self.screen = tuple(meta.get("screen") or self.screen)
         self.paths = self.paths_for(Path(path))
         self._writers = {k: GzipTsvWriter(self.paths[k])
                          for k in ("eye1", "eye2", "gaze")}
@@ -151,7 +153,7 @@ class EyetrackLogger(GatedLogger):
         self._fix_last = None
         self._lost_since = None
 
-    def _write(self, block):
+    def _write(self, block, first_index):
         w, h = self.screen
         for row in block:
             t = self.epoch + float(row[COL["TIME"]])
@@ -197,7 +199,7 @@ class EyetrackLogger(GatedLogger):
                                     "blink", 1))
             self._lost_since = None
 
-    def _close_file(self):
+    def _close(self):
         if self._fix_id is not None and self._fix_last is not None:
             self.events.append((self._fix_start,
                                 self._fix_last - self._fix_start,
@@ -211,16 +213,18 @@ class EyetrackLogger(GatedLogger):
             for onset, duration, kind, blink in self.events:
                 out.write([onset, round(duration, 4), kind, blink, None])
             out.close()
+        return {"first": self.first_sample, "last": self.last_sample,
+                "valid": dict(self.valid)}
 
 
 # -- the device ----------------------------------------------------------------------
 
 @dataclass
 class Graph:
-    pipeline: gp.Pipeline
+    """The GP3's nodes in the session pipeline."""
     source: GazeSource
     tap: SweepTap
-    logger: EyetrackLogger
+    writer: EyetrackWriter
 
 
 class GP3Device(Device):
@@ -254,73 +258,32 @@ class GP3Device(Device):
             return RemoteBackend(self.config)
         return LocalBackend(self.config, self.calibration_folder)
 
-    # -- acquisition -------------------------------------------------------
+    # -- the session pipeline ----------------------------------------------------
 
-    def start(self) -> None:
-        with self._lock:
-            if self.state != IDLE:
-                return
-            self.error = None
-            self._set_state(STARTING)
-            graph = backend = None
-            try:
-                p = gp.Pipeline()
-                source = GazeSource(name="gp3")
-                tap = SweepTap(seconds=10, name="gaze")
-                logger = EyetrackLogger(name="bids_eyetrack")
-                p.connect(source, tap)
-                p.connect(source, logger)
-                graph = Graph(p, source, tap, logger)
-                p.add_error_handler(self._pipeline_failed)
-                p.start()
-                backend = self.make_backend()
-                backend.on_row = source.push
-                backend.on_error = self._fail
-                backend.start()
-            except BaseException:
-                if backend is not None:
-                    try:
-                        backend.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
-                if graph is not None:
-                    try:
-                        graph.pipeline.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
-                self._set_state(IDLE)
-                raise
-            self.graph, self.backend = graph, backend
-            self.calibrations, self.validations = [], []
-            self._set_state(RUNNING)
+    def build(self, pipeline: gp.Pipeline) -> None:
+        source = GazeSource(name=self.node_name("source"))
+        tap = SweepTap(seconds=10, name=self.node_name("view"))
+        writer = EyetrackWriter(self.node_name("bids"))
+        pipeline.connect(source, tap)
+        pipeline.connect(source, writer)
+        self.graph = Graph(source, tap, writer)
 
-    def stop(self) -> None:
-        with self._lock:
-            graph, backend = self.graph, self.backend
-            if graph is None:
-                return
-            self._set_state(STOPPING)
-            try:
-                if self.recording:
-                    self.end_recording()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if backend is not None:
-                    backend.stop()
-            finally:
-                try:
-                    graph.pipeline.stop()
-                finally:
-                    self.graph = self.backend = None
-                    self._set_state(IDLE)
+    def opened(self) -> None:
+        backend = self.make_backend()
+        backend.on_row = self.graph.source.push
+        backend.on_error = self._fail
+        backend.start()
+        self.backend = backend
+        self.calibrations, self.validations = [], []
 
-    def _pipeline_failed(self, entry) -> None:
-        try:
-            message = str(entry["message"])
-        except Exception:  # noqa: BLE001
-            message = str(entry)
-        self._fail(message)
+    def closing(self) -> None:
+        backend, self.backend = self.backend, None
+        if backend is not None:
+            backend.stop()
+
+    def closed(self) -> None:
+        self.graph = None
+        self._target = None
 
     # -- calibration ---------------------------------------------------------
 
@@ -349,7 +312,7 @@ class GP3Device(Device):
     @property
     def recording(self) -> bool:
         graph = self.graph
-        return bool(graph and graph.logger.recording)
+        return bool(graph and graph.writer.recording)
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
         with self._lock:
@@ -360,29 +323,28 @@ class GP3Device(Device):
             # recorded with it.
             path = target.dataset.path(target.entities, DATATYPE,
                                        "physio", ".tsv.gz", recording="eye1")
-            logger = graph.logger
-            logger.epoch = graph.source.epoch
-            logger.screen = (backend.screen.width, backend.screen.height)
-            logger.begin(str(path), logger.seen + GATE_MARGIN // 4)
+            self.invoke(graph.writer, "begin", {
+                "path": str(path),
+                "meta": {"epoch": graph.source.epoch,
+                         "screen": [backend.screen.width,
+                                    backend.screen.height]}})
             self._target = target
-            return list(EyetrackLogger.paths_for(path).values())
+            return list(EyetrackWriter.paths_for(path).values())
 
     def end_recording(self) -> RecordedFiles:
         with self._lock:
             graph, target, backend = self.graph, self._target, self.backend
-            if graph is None or target is None or not graph.logger.recording:
+            if graph is None or target is None or not graph.writer.recording:
                 return RecordedFiles()
-            logger = graph.logger
-            logger.end(logger.seen + 1)
-            deadline = time.monotonic() + 1.0
-            while logger.recording and time.monotonic() < deadline:
-                time.sleep(0.01)
-            logger.end()
+            # The frames already on their way from the tracker.
+            time.sleep(0.05)
+            summary = self.invoke(graph.writer, "end")
             self._target = None
-            paths = dict(logger.paths)
-            first, last = logger.first_sample, logger.last_sample
-            samples = logger.samples_written
-            valid = dict(logger.valid)
+            writer = graph.writer
+            paths = dict(writer.paths)
+            first, last = summary.get("first"), summary.get("last")
+            samples = int(summary.get("samples") or 0)
+            valid = dict(summary.get("valid") or writer.valid)
             screen = backend.screen if backend else None
             info = dict(backend.info) if backend else {}
             kind = backend.kind if backend else ""

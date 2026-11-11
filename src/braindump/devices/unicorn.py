@@ -1,24 +1,27 @@
-"""The g.tec Unicorn Hybrid Black, through g.Pype.
+"""The g.tec Unicorn Hybrid Black, as g.Pype's own HybridBlack source.
 
-The pipeline is built from g.Pype and from Rhino Recorder's g.Pype nodes
-(the headset source with acquisition-time stamps, the simulated headset,
-the Unicorn channel layout, swappable filters and gated loggers)::
+The headset's nodes in the session pipeline::
 
-    HeadsetSource ─┐                  ┌─ SweepTap "raw"   (quality, raw view)
-    UDPReceiver ───┴─ Router ─ Layout ┼─ Filter ─ Notch ─ SweepTap "scope"
-                                      └─ Recording filter ─ Router (kept
-                                         channels) ─ BidsBdfLogger
+    HybridBlack ─┐                       ┌─ SweepTap "raw"  (quality, raw view)
+    UDPReceiver ─┴─ Router ─ Labeler ────┼─ Filter ─ Notch ─ SweepTap "scope"
+                                         └─ GenericFilter … ─ ChannelSelector
+                                              ─ BdfWriter   (BIDS, recording)
 
-The recording filter (high-pass, low-pass and notch, set in the settings;
-by default a 0.1 Hz high-pass and no low-pass) is applied to the EEG as it
-is recorded, and described in the sidecars. The Filter and Notch boxes
-only shape the view.
+g.Pype's HybridBlack drives the headset (and, simulated, a stand-in for
+its driver: :mod:`.unicorn_sim`); :class:`~braindump.pipeline.AcquisitionStamps`
+keeps every scan's acquisition time, corrected for Bluetooth bursts. The
+channels are named with g.Pype's ChannelLabeler and chosen with its
+ChannelSelector. The recording filter (high-pass, low-pass and notch, set
+in the settings; by default a 0.1 Hz high-pass and no low-pass) is a chain
+of g.Pype GenericFilters on the EEG channels, fixed while connected and
+described in the sidecars. The Filter and Notch boxes only shape the view,
+through filters that can be swapped while the pipeline runs
+(:class:`~braindump.pipeline.ViewFilter`: g.Pype's own filters can only be
+bypassed).
 """
 from __future__ import annotations
 
-import threading
-import time
-from array import array
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,48 +29,55 @@ from typing import Optional
 
 import gpype as gp
 import numpy as np
-from gpype.common.constants import Constants
-from rhinorecorder import layout, presets
-from rhinorecorder.nodes import EegFilter, SweepTap, UnicornLayout
-from rhinorecorder.recorder import GATE_MARGIN
-from rhinorecorder.settings import trigger_bind_address
-from rhinorecorder.sources import HeadsetSource, SimulatedSource
+from gpype.backend.sources.hybrid_black import HybridBlack
+from scipy import signal
 
-from .. import __version__, clock
+from .. import __version__, clock, presets
 from ..bids import NA, write_json, write_tsv
+from ..pipeline import AcquisitionStamps, BdfWriter, SweepTap, ViewFilter
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    Event, RecordedFiles, RecordingTarget, Timeline)
-from .eeg import (BidsBdfLogger, RecordingFilter, TimingFit,  # noqa: F401
+from .unicorn_sim import SIMULATED_SERIAL, SimulatedHybridBlack
+from .eeg import (RecordingFilter, TimingFit,  # noqa: F401
                   channel_filter_columns, fit_timing, highpass_choices,
                   lowpass_choices)
+
+SAMPLING_RATE = 250
+NUM_EEG = 8
 
 #: The Unicorn's default electrode positions (10-20 system).
 DEFAULT_ELECTRODES = ["Fz", "C3", "Cz", "C4", "Pz", "PO7", "Oz", "PO8"]
 
-#: Optional channel groups, as Rhino Recorder names them, and what they
-#: hold.
+#: The headset's channels, in the order HybridBlack delivers them (with
+#: every group on): label, BIDS type, unit.
+CHANNELS = ([(f"EEG {i + 1}", "EEG", "uV") for i in range(NUM_EEG)]
+            + [(f"ACC {a}", "ACCEL", "g") for a in "XYZ"]
+            + [(f"GYR {a}", "GYRO", "deg/s") for a in "XYZ"]
+            + [("BAT", "MISC", "%"), ("CNT", "MISC", NA),
+               ("VALID", "MISC", NA)])
+EEG = list(range(NUM_EEG))
+BAT, CNT, VALID = 14, 15, 16
+#: TRIG follows the headset's channels, when a trigger port is set.
+TRIGGER = len(CHANNELS)
+
+#: Optional channel groups and what they hold.
 GROUPS = {
     "accelerometer": "Accelerometer (ACC X/Y/Z)",
     "gyroscope": "Gyroscope (GYR X/Y/Z)",
     "counter": "Sample counter (CNT)",
     "battery": "Battery level (BAT)",
     "validation": "Validation indicator (VALID)",
-    "timing": "Inter-sample time (DT)",
 }
-
-#: BIDS channel type and unit of each Unicorn layout channel.
-_BIDS_TYPE = {"ACC": ("ACCEL", "g"), "GYR": ("GYRO", "deg/s"),
-              "CNT": ("MISC", NA), "BAT": ("MISC", "%"),
-              "VALID": ("MISC", NA), "DT": ("MISC", "ms"),
-              "TRIG": ("TRIG", NA)}
-
+_GROUP_CHANNELS = {"accelerometer": [8, 9, 10], "gyroscope": [11, 12, 13],
+                   "battery": [BAT], "counter": [CNT],
+                   "validation": [VALID]}
 
 #: The recording filter's choices: every cut-off of the Unicorn Recorder's
 #: predefined filters. 0 is no high-pass; half the sampling rate is no
 #: low-pass.
-NYQUIST = layout.SAMPLING_RATE / 2
+NYQUIST = SAMPLING_RATE / 2
 HIGHPASS = highpass_choices()
-LOWPASS = lowpass_choices(layout.SAMPLING_RATE)[1:] + [float(NYQUIST)]
+LOWPASS = lowpass_choices(SAMPLING_RATE)[1:] + [float(NYQUIST)]
 
 
 @dataclass
@@ -82,7 +92,6 @@ class UnicornConfig(DeviceConfig):
     counter: bool = True
     battery: bool = True
     validation: bool = True
-    timing: bool = False
     #: The headset's internal square-wave test signal instead of the EEG.
     test_signal: bool = False
     #: Bluetooth delay taken off the time stamps, in ms.
@@ -107,91 +116,112 @@ class UnicornConfig(DeviceConfig):
     def recording_filter(self) -> RecordingFilter:
         return RecordingFilter(float(self.record_highpass),
                                float(self.record_lowpass),
-                               str(self.record_notch),
-                               float(layout.SAMPLING_RATE))
+                               str(self.record_notch), float(SAMPLING_RATE))
 
     def groups(self) -> dict[str, bool]:
         return {name: bool(getattr(self, name)) for name in GROUPS}
 
+    def channels(self) -> list[int]:
+        """The headset channels recorded: the EEG, then the groups that
+        are on, in the headset's order."""
+        kept = list(EEG)
+        for name, on in self.groups().items():
+            if on:
+                kept += _GROUP_CHANNELS[name]
+        return sorted(kept)
+
     def electrode_names(self) -> list[str]:
         names = [str(n).strip() for n in (self.electrodes or [])]
-        names += [f"EEG {i + 1}" for i in range(len(names), layout.NUM_EEG)]
-        return [n or f"EEG {i + 1}"
-                for i, n in enumerate(names[:layout.NUM_EEG])]
+        names += [f"EEG {i + 1}" for i in range(len(names), NUM_EEG)]
+        return [n or f"EEG {i + 1}" for i, n in enumerate(names[:NUM_EEG])]
 
 
-#: Column of the sample counter in the headset's scan.
-SCAN_COUNTER = 15
-class _Stamped:
-    """Keeps every scan's acquisition time, on brAIn dump's clock.
-
-    Rhino Recorder's sources stamp each frame with when its scan was
-    acquired, correcting for Bluetooth bursts and the link's delay; g.Pype
-    uses the stamp to place triggers and then drops it before any sink.
-    This keeps it, with the scan's counter, so a recording's timing can be
-    measured: when its first sample was acquired, and how fast the
-    headset's clock really ran."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._stamps_lock = threading.Lock()
-        self.acquired = array("d")
-        self.counters = array("d")
-
-    def start(self):
-        with self._stamps_lock:
-            self.acquired = array("d")
-            self.counters = array("d")
-        return super().start()
-
-    def cycle(self):
-        frame = self._current_frame
-        result = super().cycle()
-        width = getattr(self, "_total_channels", None)
-        if frame is not None and width is not None and \
-                frame.shape[1] > width:
-            from gpype.common._private import channels
-            now = channels.stamp_clock()
-            to_clock = clock.from_stamp(now) - now
-            with self._stamps_lock:
-                for row in frame:
-                    stamp = channels.unwrap_time(float(row[width]), now)
-                    self.acquired.append(stamp + to_clock)
-                    self.counters.append(float(row[SCAN_COUNTER]))
-        return result
-
-    def stamps(self) -> tuple[np.ndarray, np.ndarray]:
-        """Acquisition times and counters of every scan since the start."""
-        with self._stamps_lock:
-            return (np.frombuffer(self.acquired, dtype=float).copy(),
-                    np.frombuffer(self.counters, dtype=float).copy())
+class StampedHybridBlack(AcquisitionStamps, HybridBlack):
+    """g.Pype's HybridBlack, keeping every scan's acquisition time."""
+    counter_column = CNT
+    burst_corrected = True
 
 
-class StampedHeadsetSource(_Stamped, HeadsetSource):
-    """The headset, keeping every scan's acquisition time."""
+class StampedSimulatedHybridBlack(AcquisitionStamps, SimulatedHybridBlack):
+    """g.Pype's HybridBlack on the simulated headset."""
+    counter_column = CNT
+    burst_corrected = True
 
 
-class StampedSimulatedSource(_Stamped, SimulatedSource):
-    """The simulated headset, keeping every scan's acquisition time."""
+def recording_filter_nodes(recorded: RecordingFilter,
+                           prefix: str) -> list[gp.GenericFilter]:
+    """The recording filter as g.Pype GenericFilters (on the EEG channels
+    only): the Butterworth high-, low- or band-pass, then each notch."""
+    nodes = []
+    low, high = recorded.low_cutoff, recorded.high_cutoff
+    if low and high:
+        b, a = signal.butter(presets.FILTER_ORDER, [low, high], "bandpass",
+                             fs=recorded.fs)
+        nodes.append(gp.GenericFilter(b=b, a=a, name=f"{prefix}_bandpass"))
+    elif low or high:
+        b, a = signal.butter(presets.FILTER_ORDER, low or high,
+                             "highpass" if low else "lowpass",
+                             fs=recorded.fs)
+        nodes.append(gp.GenericFilter(
+            b=b, a=a, name=f"{prefix}_{'highpass' if low else 'lowpass'}"))
+    for i, f in enumerate(recorded.notches()):
+        b, a = signal.iirnotch(f, presets.NOTCH_Q, fs=recorded.fs)
+        nodes.append(gp.GenericFilter(b=b, a=a,
+                                      name=f"{prefix}_notch{i}"))
+    return nodes
 
 
 @dataclass
 class Graph:
-    pipeline: gp.Pipeline
-    source: object
-    layout: UnicornLayout
+    """The headset's nodes in the session pipeline."""
+    source: AcquisitionStamps
     raw: SweepTap
     scope: SweepTap
-    bandpass: EegFilter
-    notch: EegFilter
-    logger: BidsBdfLogger
+    bandpass: ViewFilter
+    notch: ViewFilter
+    writer: BdfWriter
     recorded: RecordingFilter
+    #: Columns of the recorded channels, in the labelled stream.
+    channels: list[int]
+    #: Column of TRIG in the labelled stream; None without a trigger.
+    trigger: Optional[int] = None
 
 
 def find_headsets(rescan: bool = False) -> list[str]:
-    """Serials of the headsets in range (or paired, on Windows)."""
-    from rhinorecorder.ui.connect_dialog import find_headsets as find
-    return find(rescan)
+    """Serials of the headsets gtec-unicorn can open: the paired ones on
+    Windows; on Linux and macOS, the devices named UN-... in range, paired
+    or not, which takes several seconds (the previous search's result is
+    reused unless ``rescan``).
+
+    The driver is asked directly, as g.Pype's HybridBlack does: its
+    ``get_available_devices`` can neither search again nor say why it
+    found nothing.
+
+    Raises:
+        RuntimeError: If gtec-unicorn cannot be loaded on this system.
+    """
+    try:
+        import gtec_unicorn
+    except (ImportError, OSError) as error:
+        raise RuntimeError(f"gtec-unicorn could not be loaded: {error}") \
+            from error
+    return [str(s) for s in
+            gtec_unicorn.Amplifier.get_connected_devices(rescan=rescan)]
+
+
+#: Addresses that mean this computer only.
+_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def trigger_bind_address(ip: str, port: int, platform: str = sys.platform
+                         ) -> str:
+    """The address the trigger input listens on. macOS lets ordinary
+    programs listen on ports below 1024 only on all interfaces, not on
+    127.0.0.1; there, a loopback address with such a port listens on all
+    interfaces instead (still receiving what is sent to 127.0.0.1)."""
+    if platform == "darwin" and port < 1024 and ip.strip() in _LOOPBACK:
+        return "0.0.0.0"
+    return ip
 
 
 class UnicornDevice(Device):
@@ -208,111 +238,74 @@ class UnicornDevice(Device):
         super().__init__(config, project_folder, simulate)
         self.graph: Optional[Graph] = None
         self._target: Optional[RecordingTarget] = None
-        self._channels: list[int] = []
 
-    # -- acquisition -----------------------------------------------------
+    # -- the session pipeline ------------------------------------------------
 
     def _source(self):
         cfg = self.config
         common = dict(include_accel=True, include_gyro=True,
-                      include_aux=True, frame_size=1, enable_oscar=False,
-                      name="unicorn", latency_ms=cfg.latency_ms,
-                      test_signal=cfg.test_signal)
+                      include_aux=True, frame_size=1,
+                      latency_ms=cfg.latency_ms,
+                      test_signal=cfg.test_signal,
+                      name=self.node_name("source"))
         if self.simulated:
-            return StampedSimulatedSource(**common)
-        return StampedHeadsetSource(serial=cfg.serial or None, **common)
+            return StampedSimulatedHybridBlack(**common)
+        return StampedHybridBlack(serial=cfg.serial or None, **common)
 
-    def build(self) -> Graph:
+    def build(self, p: gp.Pipeline) -> None:
         cfg = self.config
-        p = gp.Pipeline()
         source = self._source()
         upstream = source
+        labels = [label for label, _, _ in CHANNELS]
+        labels[:NUM_EEG] = cfg.electrode_names()
+        trigger = None
         if cfg.trigger_port:
-            trigger = gp.UDPReceiver(
+            udp = gp.UDPReceiver(
                 ip=trigger_bind_address(cfg.trigger_ip, cfg.trigger_port),
-                port=cfg.trigger_port, name="trigger")
+                port=cfg.trigger_port, name=self.node_name("trigger"))
             merge = gp.Router(input_channels=[gp.Router.ALL, gp.Router.ALL],
-                              name="merge")
+                              name=self.node_name("merge"))
             p.connect(source, merge["in1"])
-            p.connect(trigger, merge["in2"])
+            p.connect(udp, merge["in2"])
             upstream = merge
-        arranged = UnicornLayout(raw=True, name="layout")
-        p.connect(upstream, arranged)
-        raw = SweepTap(seconds=10, name="raw")
-        p.connect(arranged, raw)
-        bandpass = EegFilter(presets.filter_sos(cfg.view_filter),
-                             name="filter")
-        notch = EegFilter(presets.notch_sos(cfg.view_notch), name="notch")
-        p.connect(arranged, bandpass)
+            labels.append("TRIG")
+            trigger = TRIGGER
+        named = gp.ChannelLabeler(labels=labels,
+                                  name=self.node_name("labels"))
+        p.connect(upstream, named)
+        raw = SweepTap(seconds=10, name=self.node_name("raw"))
+        p.connect(named, raw)
+        bandpass = ViewFilter(presets.filter_sos(cfg.view_filter),
+                             name=self.node_name("view_filter"))
+        notch = ViewFilter(presets.notch_sos(cfg.view_notch),
+                          name=self.node_name("view_notch"))
+        p.connect(named, bandpass)
         p.connect(bandpass, notch)
-        scope = SweepTap(seconds=10, name="scope")
+        scope = SweepTap(seconds=10, name=self.node_name("scope"))
         p.connect(notch, scope)
 
-        self._channels = layout.selected(cfg.groups())
-        logger = BidsBdfLogger(cfg.electrode_names(), cfg.latency_ms,
-                               name="bids_bdf")
+        # Recorded: through the recording filter, the chosen channels.
         recorded = cfg.recording_filter()
-        upstream = arranged
-        sos = recorded.sos()
-        if sos is not None:
-            # Fixed while connected: the sidecars describe one filter.
-            record_filter = EegFilter(sos, name="record_filter")
-            p.connect(arranged, record_filter)
-            upstream = record_filter
-        if self._channels != list(range(len(layout.CHANNELS))):
-            select = gp.Router(input_channels={
-                Constants.Defaults.PORT_IN: self._channels}, name="select")
+        upstream = named
+        for node in recording_filter_nodes(recorded,
+                                           self.node_name("record")):
+            p.connect(upstream, node)
+            upstream = node
+        channels = cfg.channels() + ([TRIGGER] if trigger is not None
+                                     else [])
+        if len(channels) != len(labels):
+            select = gp.ChannelSelector(indices=channels,
+                                        name=self.node_name("channels"))
             p.connect(upstream, select)
             upstream = select
-        p.connect(upstream, logger)
-        return Graph(p, source, arranged, raw, scope, bandpass, notch, logger,
-                     recorded)
+        writer = BdfWriter(self.node_name("bids"))
+        p.connect(upstream, writer)
+        self.graph = Graph(source, raw, scope, bandpass, notch, writer,
+                           recorded, channels, trigger)
 
-    def start(self) -> None:
-        with self._lock:
-            if self.state != IDLE:
-                return
-            self.error = None
-            self._set_state(STARTING)
-            graph = None
-            try:
-                graph = self.build()
-                graph.pipeline.add_error_handler(self._pipeline_failed)
-                graph.pipeline.start()
-            except BaseException:
-                if graph is not None:
-                    try:
-                        graph.pipeline.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
-                self._set_state(IDLE)
-                raise
-            self.graph = graph
-            self._set_state(RUNNING)
-
-    def stop(self) -> None:
-        with self._lock:
-            graph = self.graph
-            if graph is None:
-                return
-            self._set_state(STOPPING)
-            try:
-                if self.recording:
-                    self.end_recording()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                graph.pipeline.stop()
-            finally:
-                self.graph = None
-                self._set_state(IDLE)
-
-    def _pipeline_failed(self, entry) -> None:
-        try:
-            message = str(entry["message"])
-        except Exception:  # noqa: BLE001
-            message = str(entry)
-        self._fail(message)
+    def closed(self) -> None:
+        self.graph = None
+        self._target = None
 
     # -- live view settings ------------------------------------------------
 
@@ -331,7 +324,7 @@ class UnicornDevice(Device):
     @property
     def recording(self) -> bool:
         graph = self.graph
-        return bool(graph and graph.logger.recording)
+        return bool(graph and graph.writer.recording)
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
         with self._lock:
@@ -340,37 +333,35 @@ class UnicornDevice(Device):
                 raise RuntimeError("The Unicorn is not acquiring.")
             path = target.dataset.path(target.entities, target.datatype,
                                        "eeg", ".bdf")
-            logger = graph.logger
-            logger.subject_id = f"sub-{target.entities.sub}"
-            logger.recording_id = target.entities.stem()
-            logger.device_serial = self.identity()
-            logger.begin(str(path), logger.seen + GATE_MARGIN)
+            self.invoke(graph.writer, "begin", {
+                "path": str(path),
+                "meta": {"electrodes": self.config.electrode_names(),
+                         "subject": f"sub-{target.entities.sub}",
+                         "recording": target.entities.stem(),
+                         "serial": self.identity()}})
             self._target = target
             return [path]
 
     def end_recording(self) -> RecordedFiles:
         with self._lock:
             graph, target = self.graph, self._target
-            if graph is None or target is None or not graph.logger.recording:
+            if graph is None or target is None or not graph.writer.recording:
                 return RecordedFiles()
-            logger = graph.logger
-            logger.end(logger.seen + GATE_MARGIN)
-            deadline = time.monotonic() + 2.0
-            while logger.recording and time.monotonic() < deadline:
-                time.sleep(0.01)
-            logger.end()
+            writer = graph.writer
+            summary = self.invoke(writer, "end")
             self._target = None
-            path = Path(logger.path)
-            samples = logger.samples_written
-            events = list(logger.events)
-            labels = list(logger.labels)
+            path = Path(writer.path)
+            samples = int(summary.get("samples") or 0)
+            events = list(writer.events)
+            labels = list(writer.file_labels)
             info = self.device_info
-            timing = self._timing(graph.source, logger, samples)
+            timing = self._timing(graph.source, writer, samples)
             recorded = graph.recorded
+            columns = list(graph.channels)
 
         def finalize(reference: Optional[Timeline]) -> None:
-            self._write_sidecars(target, path, samples, labels, info,
-                                 timing, recorded)
+            self._write_sidecars(target, path, samples, labels, columns,
+                                 info, timing, recorded)
 
         first = timing.timeline.t0
         moment = datetime.fromtimestamp(first)
@@ -387,23 +378,24 @@ class UnicornDevice(Device):
                              samples=samples, events=triggers,
                              timeline=timing.timeline)
 
-    def _timing(self, source, logger: BidsBdfLogger,
+    def _timing(self, source, writer: BdfWriter,
                 samples: int) -> TimingFit:
         """The recording's timeline, from its samples' acquisition stamps
-        (see :class:`_Stamped`), or, without them, from when its first
-        sample arrived."""
-        nominal = float(layout.SAMPLING_RATE)
-        fallback = TimingFit(Timeline(logger.first_arrival or clock.now(),
+        (see :class:`~braindump.pipeline.AcquisitionStamps`), or, without
+        them, the nominal rate from now."""
+        nominal = float(SAMPLING_RATE)
+        fallback = TimingFit(Timeline(clock.now() - samples / nominal,
                                       nominal, nominal), method="arrival")
-        if logger.start_index is None or not hasattr(source, "stamps"):
+        if writer.start_index is None or not hasattr(source, "stamps"):
             return fallback
         acquired, counters = source.stamps()
-        start = logger.start_index
-        if logger.first_counter is not None and start < len(counters) \
-                and counters[start] != logger.first_counter:
+        start = writer.start_index
+        first_counter = writer.first_counter
+        if first_counter is not None and start < len(counters) \
+                and counters[start] != first_counter:
             # The pipeline's index and the source's disagree: find the
             # sample by its counter.
-            found = np.flatnonzero(counters == logger.first_counter)
+            found = np.flatnonzero(counters == first_counter)
             if not len(found):
                 return fallback
             start = int(found[np.argmin(np.abs(found - start))])
@@ -412,12 +404,12 @@ class UnicornDevice(Device):
         return fit_timing(acquired[start:start + samples], nominal)
 
     def _write_sidecars(self, target: RecordingTarget, path: Path,
-                        samples: int, labels: list[str],
+                        samples: int, labels: list[str], columns: list[int],
                         info: dict, timing: TimingFit,
                         recorded: RecordingFilter) -> None:
         cfg = self.config
-        fs = float(layout.SAMPLING_RATE)
-        kinds = [self._bids_type(i) for i in self._channels]
+        fs = float(SAMPLING_RATE)
+        kinds = [self._bids_type(i) for i in columns]
         count = {k: sum(1 for t, _ in kinds if t == k)
                  for k in ("EEG", "MISC", "TRIG", "ACCEL", "GYRO")}
         software = [f"brAIn dump {__version__}", f"g.Pype {gp.__version__}"]
@@ -469,10 +461,10 @@ class UnicornDevice(Device):
 
     @staticmethod
     def _bids_type(index: int) -> tuple[str, str]:
-        label = layout.CHANNELS[index].label
-        if index in layout.EEG:
-            return "EEG", "uV"
-        return _BIDS_TYPE.get(label.split(" ")[0], ("MISC", NA))
+        if index == TRIGGER:
+            return "TRIG", NA
+        _, kind, unit = CHANNELS[index]
+        return kind, unit
 
     # -- status ----------------------------------------------------------------
 
@@ -490,7 +482,6 @@ class UnicornDevice(Device):
 
     def identity(self) -> str:
         if self.simulated:
-            from rhinorecorder.simulator import SIMULATED_SERIAL
             return SIMULATED_SERIAL
         graph = self.graph
         if graph is not None:
@@ -503,14 +494,14 @@ class UnicornDevice(Device):
     @property
     def lost_scans(self) -> int:
         graph = self.graph
-        return int(graph.layout.invalid_scans) if graph else 0
+        return int(graph.source.lost_scans) if graph else 0
 
     def battery(self) -> Optional[float]:
         graph = self.graph
         if graph is None:
             return None
         rows = graph.raw.latest(1)
-        return float(rows[-1, layout.BAT]) if len(rows) else None
+        return float(rows[-1, BAT]) if len(rows) else None
 
     def status(self) -> str:
         name = self.identity() or "Unicorn"

@@ -13,6 +13,7 @@ from braindump.bids import read_tsv
 from braindump.devices import make_device
 from braindump.devices.hiamp import (NO_FILTER, HIampConfig,
                                      default_bandpass)
+from braindump.pipeline import DeviceError
 from braindump.project import Project
 from braindump.recording import Session, Subject
 
@@ -157,6 +158,10 @@ def test_a_filter_not_offered_at_the_rate_stops_the_connection(tmp_path):
     _, amp = _device(tmp_path, "rate", {
         "sampling_rate": 1200, "amp_filters": probe.config.amp_filters,
         "amp_bandpass": index})
-    with pytest.raises(ValueError, match="not one it offers at 1200 Hz"):
+    with pytest.raises(DeviceError,
+                       match="not one it offers at 1200 Hz") as refused:
         amp.start()
+    # Named for the device, with the amplifier's own reason as the cause.
+    assert refused.value.device is amp
+    assert isinstance(refused.value.__cause__, ValueError)
     assert not amp.running

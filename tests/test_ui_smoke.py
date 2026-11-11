@@ -24,8 +24,11 @@ def test_main_window_simulated(tmp_path):
     project.add_device("obs", {})
     window = MainWindow(project, simulate=True)
     window.show()
-    for d in window.devices.values():
-        d.start()
+    # Connect all: one g.Pype pipeline, started once with every device.
+    window.pipeline.connect(list(window.devices.values()))
+    assert window.pipeline.devices == list(window.devices.values())
+    assert all(d.session is window.pipeline
+               for d in window.devices.values())
     deadline = time.time() + 2
     while time.time() < deadline:
         app.processEvents()
