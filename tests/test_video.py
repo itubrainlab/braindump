@@ -12,6 +12,7 @@ import pytest
 from conftest import connect_all
 from braindump.bids import read_tsv
 from braindump.devices import make_device
+from braindump.pipeline import DeviceError
 from braindump.project import Project
 from braindump.recording import Session, Subject
 
@@ -94,7 +95,9 @@ def test_obs_over_ndi(tmp_path):
     try:
         try:
             obs.start()
-        except ConnectionError as error:
+        except DeviceError as error:
+            if not isinstance(error.__cause__, ConnectionError):
+                raise
             pytest.skip(f"NDI discovery does not work here: {error}")
         obs.stop()
         # Recording starts as the stream connects, before its first frame
