@@ -34,7 +34,8 @@ def test_defaults_and_choices():
     assert 0 in HIGHPASS and NYQUIST in LOWPASS
     # A saved project from before keeps working, with the defaults.
     old = UnicornConfig.from_dict({"serial": "UN-1"})
-    assert old.recording_filter() == RecordingFilter()
+    kept = old.recording_filter()
+    assert (kept.low_cutoff, kept.high_cutoff, kept.notches()) == (0.1, None, [])
 
 
 def test_filter_descriptions():

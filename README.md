@@ -63,6 +63,13 @@ rest of brAIn dump does without it.
   to the recorded EEG and described in `eeg.json` (`SoftwareFilters`) and
   `channels.tsv`. The Filter and Notch boxes above the viewer only change
   what is shown.
+- **g.HIamp recording filters**: the amplifier's own band-pass and notch,
+  chosen in the Settings from those g.tec's driver lists for the sampling
+  rate (**Load from amplifier**, or listed as it connects). The first time
+  a rate's filters are loaded, the band-pass is set to the amplifier's
+  0.1 Hz high-pass (no low-pass). They are described in `eeg.json`
+  (`HardwareFilters`) and `channels.tsv`; the Filter and Notch boxes above
+  the viewer only change what is shown.
 - **GP3**: an eye view (camera image locally, pupil positions remotely),
   distance feedback, calibration (5/9/13/16/25 points, full-screen targets
   here or on the tracker computer), validation (local), and a plot of the
