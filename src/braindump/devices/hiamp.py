@@ -304,10 +304,16 @@ class _SimulatedAmplifier:
     def __init__(self, serial=None, sampling_rate=256, channel_count=None,
                  frame_size=None, enable_di=None, enable_counter=None,
                  bandpass_filter_index=None, notch_filter_index=None,
-                 **kwargs):
+                 channel_selection=None, **kwargs):
         self.serial_number = serial or SIMULATED_SERIAL
         self.sampling_rate = int(sampling_rate or 256)
-        self.channel_count = int(channel_count or SIMULATED_CHANNELS)
+        # g.Pype 4.2 asks for channels by selection, and reads it back;
+        # 4.1 by count.
+        if channel_selection is None:
+            channel_selection = range(int(channel_count
+                                          or SIMULATED_CHANNELS))
+        self.channel_selection = [int(c) for c in channel_selection]
+        self.channel_count = len(self.channel_selection)
         self.frame_size = int(frame_size or RATES.get(self.sampling_rate, 8))
         self.enable_di = bool(enable_di)
         self.enable_counter = bool(enable_counter)
@@ -407,7 +413,9 @@ class SimulatedGHIamp(StampedGHIamp):
     for that, so a real amplifier in the same process is unaffected."""
 
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault("serial", SIMULATED_SERIAL)
+        # Its own serial even when the settings give none: without one,
+        # g.Pype (4.2) asks g.tec's device service which unit to open.
+        kwargs["serial"] = kwargs.get("serial") or SIMULATED_SERIAL
         stand_in = SimpleNamespace(GHIamp=_SimulatedAmplifier)
         real = sys.modules.get("gtec_gds")
         sys.modules["gtec_gds"] = stand_in
@@ -418,6 +426,9 @@ class SimulatedGHIamp(StampedGHIamp):
                 sys.modules.pop("gtec_gds", None)
             else:
                 sys.modules["gtec_gds"] = real
+
+    def _remember_serial(self, serial) -> None:
+        """Not g.Pype's favourite g.HIamp: that is for real units."""
 
 
 def _close(source) -> None:
