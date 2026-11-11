@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QLabel, QPushButton,
                                QSplitter, QWidget)
 
 from ..devices.unicorn import (EEG, GROUPS, HIGHPASS, LOWPASS, NUM_EEG,
+                               HybridBlack,
                                NYQUIST, SAMPLING_RATE, UnicornDevice,
                                find_headsets)
 from .. import presets
@@ -109,7 +110,8 @@ class UnicornPage(DevicePage):
                      "(no hardware)")
         head.number("latency_ms", "Bluetooth delay", 0, 500,
                     "Taken off the time stamps, so the EEG lines up with "
-                    "the other devices (g.tec measured 40 ms).", " ms", 0)
+                    "the other devices (g.tec measured "
+                    f"{HybridBlack.DEVICE_DELAY_MS} ms).", " ms", 0)
         head.boolean("test_signal", "Test signal",
                      "The headset's internal square wave instead of the "
                      "electrodes")

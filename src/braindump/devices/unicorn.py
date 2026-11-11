@@ -94,8 +94,9 @@ class UnicornConfig(DeviceConfig):
     validation: bool = True
     #: The headset's internal square-wave test signal instead of the EEG.
     test_signal: bool = False
-    #: Bluetooth delay taken off the time stamps, in ms.
-    latency_ms: float = 40.0
+    #: Bluetooth delay taken off the time stamps, in ms: by default
+    #: g.tec's measurement, which g.Pype records but does not apply.
+    latency_ms: float = float(HybridBlack.DEVICE_DELAY_MS)
     #: UDP port triggers arrive on (into TRIG); 0 is off.
     trigger_port: int = 0
     trigger_ip: str = "127.0.0.1"
