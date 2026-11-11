@@ -36,7 +36,7 @@ def test_recorded_dataset_is_valid(tmp_path):
              for kind in ("bandpass", "notch")}
     project.devices["hiamp"].update(
         amp_filters={"256": known}, amp_bandpass=known["bandpass"][-1]["index"],
-        amp_notch=known["notch"][0]["index"], record_lowpass=50.0)
+        amp_notch=known["notch"][0]["index"])
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
     for d in devices:

@@ -5,19 +5,13 @@ amplifier with g.tec's gtec-gds driver (Windows, Linux and macOS)::
 
     GHIamp ─┬─ SweepTap "raw"                       (raw view)
             ├─ Filter ─ Notch ─ SweepTap "scope"    (filtered view)
-            └─ Recording filter ─ BidsBdfLogger     (BIDS, while recording)
+            └─ BidsBdfLogger                        (BIDS, while recording)
 
-The EEG is filtered as it is recorded, two ways, both set in the settings
-and described in the sidecars:
-
-- the **amplifier's own filters**, a band-pass and a notch from those the
-  driver lists for the sampling rate (known once the amplifier has been
-  connected), applied in the amplifier (``HardwareFilters``);
-- a **recording filter** like the Unicorn's: a causal high-pass, low-pass
-  and notch, by default a 0.1 Hz high-pass and no low-pass (half the
-  sampling rate) (``SoftwareFilters``).
-
-The Filter and Notch boxes only shape the view. The digital input (TRIG)
+The EEG is recorded through the **amplifier's own filters**: a band-pass
+and a notch, chosen in the settings from those the driver lists for the
+sampling rate (loaded from the amplifier, or listed as it connects),
+applied in the amplifier and described in the sidecars
+(``HardwareFilters``). The Filter and Notch boxes only shape the view. The digital input (TRIG)
 is recorded beside the EEG, unfiltered: its rising edges are the run's
 trigger events. Each block of
 samples is stamped as it arrives, so the recording's timing is measured
@@ -50,8 +44,8 @@ from .. import __version__, clock
 from ..bids import NA, write_json, write_tsv
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    Event, RecordedFiles, RecordingTarget, Timeline)
-from .eeg import (SIGNAL, TRIGGER, BidsBdfLogger, RecordingFilter,
-                  TimingFit, channel_filter_columns, fit_timing)
+from .eeg import (SIGNAL, TRIGGER, BidsBdfLogger, TimingFit,
+                  channel_filter_columns, fit_timing)
 
 #: Sampling rates offered, and the block size (scans) the driver
 #: recommends for each (the simulated amplifier uses them too).
@@ -83,6 +77,18 @@ def amplifier_filter(entry: dict, kind: str) -> dict:
             "high": float(_field(entry, "upper", default=0) or 0),
             "order": int(_field(entry, "order", default=0) or 0),
             "type": str(_field(entry, "type", default="") or "")}
+
+
+def default_bandpass(offered: list[dict], fs: float) -> Optional[dict]:
+    """The default band-pass among the amplifier's: a 0.1 Hz high-pass
+    with no low-pass (or one at half the sampling rate), else the
+    band-pass from 0.1 Hz with the highest low-pass; None if neither is
+    offered."""
+    from_01 = [f for f in offered if abs(f["low"] - 0.1) < 1e-6]
+    open_top = [f for f in from_01 if not f["high"] or f["high"] >= fs / 2]
+    if open_top:
+        return open_top[0]
+    return max(from_01, key=lambda f: f["high"], default=None)
 
 
 def describe_amplifier_filter(f: dict, notch: bool = False) -> str:
@@ -123,13 +129,9 @@ class HIampConfig(DeviceConfig):
     placement: str = "10-20"
     cap_manufacturer: str = "g.tec"
     cap_model: str = ""
-    # The recording filter (see RecordingFilter): 0 Hz is no high-pass,
-    # 0 (half the sampling rate) no low-pass.
-    record_highpass: float = 0.1
-    record_lowpass: float = 0.0
-    record_notch: str = presets.NONE
     #: The amplifier's own band-pass and notch: the driver's filter
-    #: indices, NO_FILTER for none.
+    #: indices, NO_FILTER for none. Until chosen, loading the filters
+    #: picks the default (see default_bandpass).
     amp_bandpass: int = NO_FILTER
     amp_notch: int = NO_FILTER
     #: The filters the amplifier offers, as it listed them when last
@@ -141,17 +143,28 @@ class HIampConfig(DeviceConfig):
     view_notch: str = presets.DEFAULT_NOTCH
     view_scaling: str = presets.DEFAULT_SCALING
 
-    def recording_filter(self) -> RecordingFilter:
-        return RecordingFilter(float(self.record_highpass),
-                               float(self.record_lowpass),
-                               str(self.record_notch),
-                               float(self.sampling_rate))
-
     def known_filters(self, kind: str) -> list[dict]:
         """The amplifier's filters of ``kind`` (bandpass or notch) at the
         sampling rate, as last listed; empty when never connected."""
         return list((self.amp_filters or {})
                     .get(str(int(self.sampling_rate)), {}).get(kind, []))
+
+    def learn_filters(self, found: dict[str, list[dict]]) -> None:
+        """Keeps the filters the amplifier offers at the sampling rate.
+        The first time a rate's filters are known, the band-pass is set
+        to the default (see :func:`default_bandpass`)."""
+        if not any(found.values()):
+            return
+        rate = str(int(self.sampling_rate))
+        known = dict(self.amp_filters or {})
+        first = rate not in known
+        known[rate] = found
+        self.amp_filters = known
+        if first and int(self.amp_bandpass) == NO_FILTER:
+            default = default_bandpass(found.get("bandpass", []),
+                                       float(self.sampling_rate))
+            if default is not None:
+                self.amp_bandpass = default["index"]
 
     def chosen_filter(self, kind: str) -> Optional[dict]:
         """The amplifier filter chosen of ``kind``; None for none."""
@@ -407,6 +420,19 @@ class SimulatedGHIamp(StampedGHIamp):
                 sys.modules["gtec_gds"] = real
 
 
+def _close(source) -> None:
+    """Releases the amplifier a source opened, without a pipeline: g.Pype's
+    own release, which the GDS sources have, else the driver's close."""
+    release = getattr(source, "_release_device", None)
+    if callable(release):
+        release()
+        return
+    device = getattr(source, "_device", None)
+    source._device = None
+    if device is not None:
+        device.close()
+
+
 # -- the device ------------------------------------------------------------------------
 
 @dataclass
@@ -418,7 +444,6 @@ class Graph:
     bandpass: EegFilter
     notch: EegFilter
     logger: BidsBdfLogger
-    recorded: RecordingFilter
     #: The amplifier's band-pass and notch in use (None for none).
     amp_bandpass: Optional[dict] = None
     amp_notch: Optional[dict] = None
@@ -450,27 +475,24 @@ class HIampDevice(Device):
         cfg = self.config
         cls = SimulatedGHIamp if self.simulated else StampedGHIamp
         rate = int(cfg.sampling_rate)
-        # Checked before the amplifier opens: settings that cannot apply
-        # stop the connection rather than record something else.
-        recorded = cfg.recording_filter()
-        if recorded.lowpass and recorded.lowpass >= rate / 2:
-            raise ValueError(
-                f"The recording filter's low-pass ({recorded.lowpass:g} Hz) "
-                f"is not below half the sampling rate ({rate / 2:g} Hz): "
-                "choose another in the settings.")
-        sos = recorded.sos()
+        # Checked before the amplifier opens: a filter that cannot apply
+        # stops the connection rather than record something else.
         amp_bandpass = cfg.chosen_filter("bandpass")
         amp_notch = cfg.chosen_filter("notch")
-        source = cls(serial=cfg.serial or None, sampling_rate=rate,
-                     channel_count=cfg.channel_count or None,
-                     frame_size=RATES.get(rate),
-                     enable_di=bool(cfg.digital_input),
-                     latency_ms=cfg.latency_ms,
-                     bandpass_index=amp_bandpass["index"] if amp_bandpass
-                     else NO_FILTER,
-                     notch_index=amp_notch["index"] if amp_notch
-                     else NO_FILTER, name="hiamp")
-        self._learn_filters(source, rate)
+        source = self._open(
+            bandpass_index=amp_bandpass["index"] if amp_bandpass
+            else NO_FILTER,
+            notch_index=amp_notch["index"] if amp_notch else NO_FILTER)
+        before = cfg.amp_bandpass
+        cfg.learn_filters(source.amplifier_filters())
+        if cfg.amp_bandpass != before:
+            # The filters were first listed as it opened, and the default
+            # band-pass chosen: open it again with that.
+            _close(source)
+            amp_bandpass = cfg.chosen_filter("bandpass")
+            source = self._open(
+                bandpass_index=amp_bandpass["index"],
+                notch_index=amp_notch["index"] if amp_notch else NO_FILTER)
         p = gp.Pipeline()
         raw = SweepTap(seconds=10, name="raw")
         p.connect(source, raw)
@@ -484,27 +506,44 @@ class HIampDevice(Device):
         p.connect(notch, scope)
         logger = BidsBdfLogger(cfg.electrodes, cfg.latency_ms,
                                name="bids_bdf")
-        if sos is not None:
-            # Fixed while connected: the sidecars describe one filter.
-            record_filter = EegFilter(sos, name="record_filter")
-            p.connect(source, record_filter)
-            p.connect(record_filter, logger)
-        else:
-            p.connect(source, logger)
+        p.connect(source, logger)
         return Graph(p, source, raw, scope, bandpass, notch, logger,
-                     recorded, amp_bandpass, amp_notch)
+                     amp_bandpass, amp_notch)
 
-    def _learn_filters(self, source, rate: int) -> None:
-        """Keeps the filters the amplifier offers at this rate in the
-        configuration, for the settings to list."""
-        try:
-            found = source.amplifier_filters()
-        except Exception:  # noqa: BLE001
-            return
-        if any(found.values()):
-            known = dict(self.config.amp_filters or {})
-            known[str(rate)] = found
-            self.config.amp_filters = known
+    def _open(self, **filters) -> StampedGHIamp:
+        """g.Pype's GHIamp source on the amplifier (or the simulated
+        one), opened with the settings' rate and channels."""
+        cfg = self.config
+        cls = SimulatedGHIamp if self.simulated else StampedGHIamp
+        rate = int(cfg.sampling_rate)
+        return cls(serial=cfg.serial or None, sampling_rate=rate,
+                   channel_count=cfg.channel_count or None,
+                   frame_size=RATES.get(rate),
+                   enable_di=bool(cfg.digital_input),
+                   latency_ms=cfg.latency_ms, name="hiamp", **filters)
+
+    def load_filters(self) -> dict[str, list[dict]]:
+        """Asks the amplifier which filters it offers at the sampling
+        rate, and keeps them in the configuration: from the running
+        source when connected, else by opening the amplifier briefly
+        (without acquiring)."""
+        with self._lock:
+            graph = self.graph
+            if graph is not None:
+                found = graph.source.amplifier_filters()
+            elif self.state != IDLE:
+                raise RuntimeError("The g.HIamp is connecting or stopping.")
+            else:
+                source = self._open()
+                try:
+                    found = source.amplifier_filters()
+                finally:
+                    _close(source)
+            if not any(found.values()):
+                raise RuntimeError("The amplifier listed no filters at "
+                                   f"{int(self.config.sampling_rate)} Hz.")
+            self.config.learn_filters(found)
+            return found
 
     def start(self) -> None:
         with self._lock:
@@ -623,7 +662,7 @@ class HIampDevice(Device):
             events = list(logger.events)
             labels, roles = list(logger.labels), list(logger.roles)
             timing = self._timing(graph.source, logger, samples)
-            filters = (graph.recorded, graph.amp_bandpass, graph.amp_notch)
+            filters = (graph.amp_bandpass, graph.amp_notch)
 
         def finalize(reference: Optional[Timeline]) -> None:
             self._write_sidecars(target, path, samples, labels, roles,
@@ -656,8 +695,7 @@ class HIampDevice(Device):
 
     def _write_sidecars(self, target: RecordingTarget, path: Path,
                         samples: int, labels: list[str], roles: list[str],
-                        timing: TimingFit, recorded: RecordingFilter,
-                        amp_bandpass: Optional[dict],
+                        timing: TimingFit, amp_bandpass: Optional[dict],
                         amp_notch: Optional[dict]) -> None:
         cfg = self.config
         fs = self.rate
@@ -670,7 +708,7 @@ class HIampDevice(Device):
             "TaskName": target.entities.task,
             "SamplingFrequency": fs,
             "PowerLineFrequency": target.power_line_frequency,
-            "SoftwareFilters": recorded.software_filters(),
+            "SoftwareFilters": NA,
             "HardwareFilters": self._hardware_filters(amp_bandpass,
                                                       amp_notch),
             "EEGReference": cfg.reference or NA,
@@ -700,18 +738,12 @@ class HIampDevice(Device):
                 f"{cfg.latency_ms:g} ms link delay, its samples one period "
                 "apart"),
         })
-        # Both filters act on the EEG channels; together they pass from
-        # the higher high-pass to the lower low-pass.
-        lows = [f for f in (recorded.low_cutoff,
-                            amp_bandpass and amp_bandpass["low"]) if f]
-        highs = [f for f in (recorded.high_cutoff,
-                             amp_bandpass and amp_bandpass["high"]) if f]
-        notches = set(recorded.notches())
-        if amp_notch:
-            notches.add((amp_notch["low"] + amp_notch["high"]) / 2)
-        filtered = channel_filter_columns(max(lows, default=None),
-                                          min(highs, default=None),
-                                          sorted(notches))
+        # The amplifier's filters act on the EEG channels.
+        filtered = channel_filter_columns(
+            amp_bandpass["low"] if amp_bandpass else None,
+            amp_bandpass["high"] if amp_bandpass else None,
+            [(amp_notch["low"] + amp_notch["high"]) / 2] if amp_notch
+            else [])
         write_tsv(path.with_name(path.name.replace("_eeg.bdf",
                                                    "_channels.tsv")),
                   ["name", "type", "units", "low_cutoff", "high_cutoff",

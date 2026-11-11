@@ -1,50 +1,88 @@
-"""The g.HIamp's recording filters (issue #5): the amplifier's own
-band-pass and notch, and a recording filter like the Unicorn's; applied to
-the recorded EEG and described in the sidecars, while the view's filter
-only changes what is shown."""
+"""The g.HIamp's amplifier filters (issue #5): the band-pass and notch the
+amplifier offers, loaded from it, applied to the recorded EEG and described
+in the sidecars, while the view's filter only changes what is shown."""
 import json
 import time
 
 import numpy as np
 import pyedflib
 import pytest
-from rhinorecorder import presets
 from scipy import signal
 
 from braindump.bids import read_tsv
 from braindump.devices import make_device
-from braindump.devices.eeg import lowpass_choices
-from braindump.devices.hiamp import NO_FILTER, HIampConfig
+from braindump.devices.hiamp import (NO_FILTER, HIampConfig,
+                                     default_bandpass)
 from braindump.project import Project
 from braindump.recording import Session, Subject
 
 RATE = 512
 
 
-def test_defaults_and_choices():
-    cfg = HIampConfig()
-    recorded = cfg.recording_filter()
-    # 0.1 Hz high-pass, and half the sampling rate (no low-pass).
-    assert (recorded.low_cutoff, recorded.high_cutoff) == (0.1, None)
-    assert recorded.notches() == []
-    assert cfg.amp_bandpass == cfg.amp_notch == NO_FILTER
-    assert cfg.chosen_filter("bandpass") is None
-    # The low-pass choices stay below half the sampling rate.
-    assert 100 in lowpass_choices(256) and 200 not in lowpass_choices(256)
-    assert 2000 in lowpass_choices(4800)
-    assert all(f in lowpass_choices(256) for f in (0, 20, 30, 50))
-    # Projects saved before this keep working, with the defaults.
-    old = HIampConfig.from_dict({"serial": "HA-1", "sampling_rate": 1200})
-    assert old.recording_filter().low_cutoff == 0.1
-    assert old.recording_filter().fs == 1200
-
-
-def _device(tmp_path, name, settings):
+def _device(tmp_path, name, settings=None):
     project = Project.create(tmp_path / name, name)
     project.add_device("hiamp", {"simulate": True, "channel_count": 8,
-                                 "sampling_rate": RATE, **settings})
+                                 "sampling_rate": RATE, **(settings or {})})
     return project, make_device("hiamp", project.devices["hiamp"],
                                 project.folder)
+
+
+def test_no_recording_filter_of_its_own():
+    cfg = HIampConfig()
+    assert not hasattr(cfg, "record_highpass")
+    assert cfg.amp_bandpass == cfg.amp_notch == NO_FILTER
+    assert cfg.known_filters("bandpass") == []
+    assert cfg.chosen_filter("bandpass") is None
+
+
+def test_default_bandpass():
+    def f(i, low, high):
+        return {"index": i, "low": low, "high": high, "order": 4, "type": ""}
+    # A 0.1 Hz high-pass with no low-pass first...
+    assert default_bandpass([f(0, 0.1, 30), f(1, 0.1, 0), f(2, 1, 0)],
+                            256)["index"] == 1
+    # ...or one whose low-pass is at half the sampling rate...
+    assert default_bandpass([f(0, 0.1, 30), f(1, 0.1, 128)],
+                            256)["index"] == 1
+    # ...else the widest band-pass from 0.1 Hz.
+    assert default_bandpass([f(0, 0.1, 30), f(1, 0.1, 100), f(2, 1, 0)],
+                            256)["index"] == 1
+    assert default_bandpass([f(0, 1, 0)], 256) is None
+
+
+def test_load_filters_without_connecting(tmp_path):
+    _, amp = _device(tmp_path, "load")
+    found = amp.load_filters()
+    assert not amp.running
+    offered = amp.config.known_filters("bandpass")
+    assert offered == found["bandpass"] and amp.config.known_filters("notch")
+    # Only those for this sampling rate, each with its cut-offs.
+    assert all(f["high"] < RATE / 2 for f in offered)
+    assert any(f["low"] == 1 and f["high"] == 100 for f in offered)
+    # The first load picks the default: 0.1 Hz, no low-pass.
+    chosen = amp.config.chosen_filter("bandpass")
+    assert (chosen["low"], chosen["high"]) == (0.1, 0)
+    # The amplifier was released: it connects, and loads while connected.
+    amp.start()
+    try:
+        assert amp.running
+        amp.config.amp_bandpass = NO_FILTER
+        assert amp.load_filters()["bandpass"] == offered
+        # Not the first load at this rate: "None" stays chosen.
+        assert amp.config.amp_bandpass == NO_FILTER
+    finally:
+        amp.stop()
+
+
+def test_first_connect_uses_the_default(tmp_path):
+    project, amp = _device(tmp_path, "first")
+    assert amp.config.known_filters("bandpass") == []
+    _, meta, _ = _record(project, amp)
+    # Listed as it connected, and recorded through the default at once.
+    assert amp.config.known_filters("bandpass")
+    used = meta["HardwareFilters"]["Amplifier band-pass"]
+    assert (used["LowerCutoffFrequency"], used["UpperCutoffFrequency"]) \
+        == (0.1, "n/a")
 
 
 def _record(project, amp):
@@ -72,52 +110,32 @@ def _share(data, above):
     return p[f > above].sum() / p[f > 2].sum()
 
 
-def test_connecting_lists_the_amplifiers_filters(tmp_path):
-    _, amp = _device(tmp_path, "list", {})
-    assert amp.config.known_filters("bandpass") == []
-    amp.start()
-    amp.stop()
-    offered = amp.config.known_filters("bandpass")
-    assert offered and amp.config.known_filters("notch")
-    # Only those for this sampling rate, each with its cut-offs.
-    assert all(f["high"] < RATE / 2 for f in offered)
-    assert any(f["low"] == 1 and f["high"] == 100 for f in offered)
-
-
 def test_recordings_are_filtered_and_described(tmp_path):
-    _, probe = _device(tmp_path, "probe", {})
-    probe.start()
-    probe.stop()
+    _, probe = _device(tmp_path, "probe")
+    probe.load_filters()
     known = probe.config.amp_filters
     band = next(f for f in probe.config.known_filters("bandpass")
                 if (f["low"], f["high"]) == (1, 100))
     notch = next(f for f in probe.config.known_filters("notch")
                  if f["low"] == 48)
 
-    # The amplifier's 1-100 Hz band-pass and 50 Hz notch, no recording
-    # filter, and a view filter that must not be recorded.
+    # The amplifier's 1-100 Hz band-pass and 50 Hz notch, and a view
+    # filter that must not be recorded.
     project, amp = _device(tmp_path, "amplifier", {
         "amp_filters": known, "amp_bandpass": band["index"],
-        "amp_notch": notch["index"], "record_highpass": 0.0,
-        "view_filter": "1 – 30 Hz"})
-    hardware, meta, rows = _record(project, amp)
-    # A recording filter only: 30 Hz low-pass, 50 Hz notch.
-    project, amp = _device(tmp_path, "software", {
-        "record_highpass": 0.5, "record_lowpass": 30.0,
-        "record_notch": "50 Hz", "view_filter": presets.NONE})
-    software, soft_meta, soft_rows = _record(project, amp)
-    # Nothing at all.
+        "amp_notch": notch["index"], "view_filter": "1 – 30 Hz"})
+    filtered, meta, rows = _record(project, amp)
+    # No filter (chosen as such: the rate's filters are already known).
     project, amp = _device(tmp_path, "none", {
-        "record_highpass": 0.0, "view_filter": "1 – 30 Hz"})
+        "amp_filters": known, "view_filter": "1 – 30 Hz"})
     plain, plain_meta, plain_rows = _record(project, amp)
 
-    assert _share(hardware, 150) < _share(plain, 150) / 10
-    assert _share(software, 60) < _share(plain, 60) / 10
+    assert _share(filtered, 150) < _share(plain, 150) / 10
 
-    amp_band = meta["HardwareFilters"]["Amplifier band-pass"]
-    assert amp_band["FilterIndex"] == band["index"]
-    assert (amp_band["LowerCutoffFrequency"],
-            amp_band["UpperCutoffFrequency"]) == (1, 100)
+    used = meta["HardwareFilters"]["Amplifier band-pass"]
+    assert used["FilterIndex"] == band["index"]
+    assert (used["LowerCutoffFrequency"], used["UpperCutoffFrequency"]) \
+        == (1, 100)
     assert meta["HardwareFilters"]["Amplifier notch"]["FilterIndex"] == \
         notch["index"]
     assert meta["SoftwareFilters"] == "n/a"
@@ -126,29 +144,15 @@ def test_recordings_are_filtered_and_described(tmp_path):
                == ("1", "100", "50") for r in eeg)
     assert all(r["low_cutoff"] == "n/a" for r in rows if r["type"] != "EEG")
 
-    assert soft_meta["HardwareFilters"] == "n/a"
-    assert soft_meta["SoftwareFilters"]["BandPass"]["CutoffFrequencies"] \
-        == [0.5, 30]
-    assert all((r["low_cutoff"], r["high_cutoff"], r["notch"])
-               == ("0.5", "30", "50") for r in soft_rows
-               if r["type"] == "EEG")
-
     assert plain_meta["SoftwareFilters"] == plain_meta["HardwareFilters"] \
         == "n/a"
-    assert all(r["low_cutoff"] == r["high_cutoff"] == "n/a"
+    assert all(r["low_cutoff"] == r["high_cutoff"] == r["notch"] == "n/a"
                for r in plain_rows)
 
 
-def test_settings_that_cannot_apply_stop_the_connection(tmp_path):
-    _, amp = _device(tmp_path, "low", {"sampling_rate": 256,
-                                       "record_lowpass": 200.0})
-    with pytest.raises(ValueError, match="half the sampling rate"):
-        amp.start()
-    assert not amp.running
-    # A filter the amplifier listed at another rate.
-    _, probe = _device(tmp_path, "probe", {})
-    probe.start()
-    probe.stop()
+def test_a_filter_not_offered_at_the_rate_stops_the_connection(tmp_path):
+    _, probe = _device(tmp_path, "probe")
+    probe.load_filters()
     index = probe.config.known_filters("bandpass")[0]["index"]
     _, amp = _device(tmp_path, "rate", {
         "sampling_rate": 1200, "amp_filters": probe.config.amp_filters,
