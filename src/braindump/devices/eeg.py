@@ -1,5 +1,6 @@
-"""What brAIn dump's EEG amplifiers share: the BIDS BDF logger and the
-measurement of a recording's timing."""
+"""What brAIn dump's EEG amplifiers share: the recording filter's
+description, and the measurement of a recording's timing. (Their BIDS BDF
+writer is :class:`braindump.pipeline.BdfWriter`.)"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,10 +9,9 @@ from typing import Optional
 
 import numpy as np
 from gpype.common.constants import Constants
-from rhinorecorder import presets
-from rhinorecorder.nodes import BdfLogger
+from .. import presets
 
-from .. import clock
+
 from ..bids import NA
 from .base import Timeline
 
@@ -37,7 +37,7 @@ def _cutoffs(btypes: tuple[str, ...], index: int) -> list[float]:
 
 def highpass_choices() -> list[float]:
     """High-pass cut-offs: none (0), then every one of Unicorn Recorder's
-    predefined filters (see :mod:`rhinorecorder.presets`)."""
+    predefined filters (see :mod:`braindump.presets`)."""
     return [0.0] + _cutoffs(("highpass", "bandpass"), 0)
 
 
@@ -192,77 +192,3 @@ def fit_timing(acquired: np.ndarray, nominal: float) -> TimingFit:
     res = acquired - (t0 + k / nominal)
     return TimingFit(Timeline(t0, nominal, nominal), float(res.std()),
                      float(np.abs(res).max()), "nominal")
-
-
-class BidsBdfLogger(BdfLogger):
-    """Rhino Recorder's BDF+ logger, for BIDS: the EEG channels named as
-    the project says (in order of their signal role), the trigger channel
-    named TRIG, and kept beside the file: which sample it started at (and
-    that sample's counter, where there is one), and the trigger events.
-
-    A trigger is an onset: the sample where the trigger channel turns to a
-    new non-zero value. An amplifier's digital input holds its level for
-    as long as the line is high; only its rising edges are events."""
-
-    def __init__(self, electrodes: list[str], latency_ms: float = 0.0,
-                 **kwargs):
-        super().__init__(**kwargs)
-        self.electrodes = list(electrodes)
-        self.latency_s = latency_ms / 1000.0
-        #: A fallback first-sample time, from when it arrived.
-        self.first_arrival: Optional[float] = None
-        #: Pipeline index and counter of the first sample written.
-        self.start_index: Optional[int] = None
-        self.first_counter: Optional[float] = None
-        self.events: list[tuple[float, int, float]] = []
-        self._last_trigger = 0.0
-
-    def setup(self, data, port_context_in):
-        out = super().setup(data, port_context_in)
-        labels, signal = list(self.labels), 0
-        for i, role in enumerate(self.roles):
-            if role == SIGNAL:
-                if signal < len(self.electrodes) and self.electrodes[signal]:
-                    labels[i] = self.electrodes[signal]
-                signal += 1
-            elif role == TRIGGER:
-                labels[i] = "TRIG"
-        self.labels = labels
-        return out
-
-    def _open_file(self, path):
-        self.first_arrival = None
-        self.start_index = self.first_counter = None
-        self.events = []
-        self._last_trigger = 0.0
-        super()._open_file(path)
-
-    def _write(self, block):
-        if self.first_arrival is None:
-            # The newest of these rows has just arrived; it was acquired
-            # the link's delay before.
-            self.first_arrival = (clock.now() - self.latency_s
-                                  - (block.shape[0] - 1) / self.sampling_rate)
-            self.start_index = self._start_at
-            if "CNT" in self.labels:
-                self.first_counter = float(block[0, self.labels.index("CNT")])
-        status = self._status
-        if status is not None:
-            values = block[:, status]
-            previous = np.concatenate(([self._last_trigger], values[:-1]))
-            for row in np.flatnonzero((values != 0) & (values != previous)):
-                sample = self.samples_written + int(row)
-                value = float(values[row])
-                self.events.append((sample / self.sampling_rate, sample,
-                                    value))
-                self._writer.writeAnnotation(sample / self.sampling_rate, -1,
-                                             f"{value:g}")
-            self._last_trigger = float(values[-1]) if len(values) else \
-                self._last_trigger
-        # The onsets are annotated above; BdfLogger would annotate every
-        # non-zero sample.
-        self._status = None
-        try:
-            super()._write(block)
-        finally:
-            self._status = status

@@ -194,7 +194,7 @@ def calibrate(win, markers: Markers, args, visual, event, core) -> str:
             win.flip()
             if event.getKeys(["escape"]):
                 gaze.send("SET", "CALIBRATE_START", STATE="0")
-                raise KeyboardInterrupt
+                raise Escaped
         if result is None:
             raise OSError("the server sent no calibration result")
         valid = sum(1 for k, v in result.items()
@@ -265,7 +265,7 @@ def main(argv=None) -> int:
             return
         pressed = event.waitKeys(keyList=list(keys) + ["escape"])
         if "escape" in pressed:
-            raise KeyboardInterrupt
+            raise Escaped
 
     def hold(seconds: float, stim=None, marker: str | None = None) -> None:
         """Show ``stim`` for ``seconds``, counted in frames, with
@@ -277,7 +277,7 @@ def main(argv=None) -> int:
                 markers.on_flip(win, marker)
             win.flip()
             if event.getKeys(["escape"]):
-                raise KeyboardInterrupt
+                raise Escaped
 
     log_rows = []
     try:
@@ -293,7 +293,7 @@ def main(argv=None) -> int:
                 if event.getKeys(["space"]):
                     break
                 if event.getKeys(["escape"]):
-                    raise KeyboardInterrupt
+                    raise Escaped
         markers.send(f"procedure_start trials={args.trials} "
                      f"refresh={rate:.2f} participant={args.participant}")
 
@@ -375,13 +375,20 @@ def main(argv=None) -> int:
              "Experimenter: stop recording in brAIn dump, then press space.")
         markers.send("procedure_end")
         status = 0
+    except Escaped:
+        markers.send("procedure_aborted reason=escape")
+        status = 1
     except KeyboardInterrupt:
-        markers.send("procedure_aborted")
+        markers.send("procedure_aborted reason=interrupt")
         status = 1
     finally:
         _save_log(args, markers, log_rows)
         win.close()
     return status
+
+
+class Escaped(KeyboardInterrupt):
+    """The participant or experimenter pressed Escape."""
 
 
 def _save_log(args, markers: Markers, rows) -> None:

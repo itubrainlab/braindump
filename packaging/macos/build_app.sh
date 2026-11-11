@@ -8,7 +8,7 @@
 # library versions and PySide6 for the icon.
 #
 # The app carries its own Python (a relocatable python-build-standalone
-# build, as uv installs them) and the wheels of brAIn dump, Rhino Recorder
+# build, as uv installs them) and the wheels of brAIn dump
 # and OpenGP3; see ../common.sh. Its first launch installs g.Pype, g.tec's
 # gtec-unicorn driver and the other pinned libraries from PyPI. gtec-unicorn's
 # macOS wheels need macOS 14 on Apple Silicon, hence the app's minimum.

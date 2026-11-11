@@ -1,4 +1,4 @@
-"""Running with Bluetooth access on macOS (as Rhino Recorder does).
+"""Running with Bluetooth access on macOS.
 
 macOS ends a process that uses Bluetooth unless the app it belongs to
 declares why (``NSBluetoothAlwaysUsageDescription``). Started from a

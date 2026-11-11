@@ -4,10 +4,10 @@ from __future__ import annotations
 from typing import Callable
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox,
-                               QFormLayout, QFrame, QGroupBox, QHBoxLayout,
-                               QLabel, QLineEdit, QSpinBox, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox,
+                               QDoubleSpinBox, QFormLayout, QFrame,
+                               QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+                               QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
 
 class ConfigForm(QGroupBox):
@@ -97,10 +97,46 @@ class ConfigForm(QGroupBox):
 
 def panel(title: str, content: QWidget, corner: QWidget | None = None
           ) -> QGroupBox:
-    """Content in a titled group box, as g.Pype and Rhino Recorder show
-    their views."""
-    from rhinorecorder.ui.main_window import _panel
-    return _panel(title, content, corner)
+    """Content in a titled group box, as g.Pype widgets are shown, with an
+    optional control in its top right corner."""
+    box = QGroupBox(title)
+    column = QVBoxLayout(box)
+    column.setContentsMargins(8, 8, 8, 8)
+    if corner is not None:
+        header = QHBoxLayout()
+        header.addStretch(1)
+        header.addWidget(corner)
+        column.addLayout(header)
+    column.addWidget(content)
+    return box
+
+
+class SourceToggle(QWidget):
+    """A two-way switch, Filtered | Raw, choosing whether a view shows the
+    EEG after the view's filter and notch or before them."""
+
+    changed = Signal(bool)
+
+    def __init__(self, tip: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SourceToggle")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        self.filtered = QToolButton(text="Filtered")
+        self.raw = QToolButton(text="Raw")
+        group = QButtonGroup(self)
+        for button in (self.filtered, self.raw):
+            button.setCheckable(True)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            group.addButton(button)
+            row.addWidget(button)
+        self.filtered.setChecked(True)
+        self.raw.toggled.connect(self.changed.emit)
+        self.setToolTip(tip)
+
+    def is_raw(self) -> bool:
+        return self.raw.isChecked()
 
 
 def tool(icon, tip: str, size: int = 24) -> QToolButton:

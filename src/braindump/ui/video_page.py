@@ -73,12 +73,13 @@ class VideoPage(DevicePage):
         if isinstance(self.device, WebcamDevice):
             self.choices = QComboBox()
             self.choices.setMinimumWidth(240)
+            self.choices.setToolTip("The camera to record; kept by the "
+                                    "system's identifier, so it stays the "
+                                    "same camera as others come and go")
             self.choices.activated.connect(self._pick_camera)
-            search = QPushButton("Find cameras")
+            search = QPushButton("Search again")
             search.clicked.connect(self._search)
-            source.integer("camera", "Camera", 0, 16, "The camera's number: "
-                           "0 is the first (built-in) one")
-            source.form.addRow("", row(search, self.choices, None))
+            source.form.addRow("Camera", row(self.choices, search, None))
             source.integer("width", "Width", 0, 7680, suffix=" px")
             source.integer("height", "Height", 0, 4320, suffix=" px")
             source.number("fps", "Frame rate", 1, 240, "Asked of the "
@@ -99,7 +100,11 @@ class VideoPage(DevicePage):
                 "or another one on the network."))
         source.boolean("simulate", "Simulated", "A simulated source (no "
                        "hardware)")
-        self.choices.setVisible(False)
+        if isinstance(self.device, WebcamDevice):
+            self._show_chosen()
+            self._search()
+        else:
+            self.choices.setVisible(False)
         bids = ConfigForm("BIDS", cfg)
         bids.line("label", "Recording label", "The recording-<label> of the "
                   "files, telling this video from the others (letters and "
@@ -132,28 +137,58 @@ class VideoPage(DevicePage):
                 result = error
             relay.found.emit(result)
         threading.Thread(target=work, daemon=True).start()
-        self.choices.clear()
-        self.choices.addItem("Searching…")
+        if not webcam:
+            self.choices.clear()
+            self.choices.addItem("Searching…")
         self.choices.setVisible(True)
 
     def _found(self, result):
+        if isinstance(self.device, WebcamDevice):
+            if isinstance(result, Exception):
+                self._show_chosen([], f"Search failed: {result}")
+            else:
+                self._show_chosen(result)
+            return
         self.choices.clear()
         if isinstance(result, Exception):
             self.choices.addItem(f"Search failed: {result}")
         elif not result:
             self.choices.addItem("None found")
-        elif isinstance(self.device, WebcamDevice):
-            for index, name in result:
-                self.choices.addItem(f"{index}: {name}", index)
         else:
             for name in result:
                 self.choices.addItem(name, name)
 
+    def _show_chosen(self, cameras=None, note: str = "") -> None:
+        """The cameras found (or, before a search, the chosen one alone),
+        with the chosen one selected, found by its identifier."""
+        cfg = self.device.config
+        self.choices.blockSignals(True)
+        self.choices.clear()
+        current = -1
+        for camera in cameras or []:
+            self.choices.addItem(camera.name, camera)
+            if (cfg.camera_id and camera.id == cfg.camera_id) or \
+                    (not cfg.camera_id and camera.index == int(cfg.camera)):
+                current = self.choices.count() - 1
+        if current < 0:
+            # The chosen camera is not (yet) in the list: say which it is.
+            name = cfg.camera_name or f"Camera {int(cfg.camera)}"
+            missing = "" if cameras is None else " (not connected)"
+            self.choices.insertItem(0, f"{name}{missing}", None)
+            current = 0
+        if note:
+            self.choices.addItem(note, None)
+        self.choices.setCurrentIndex(current)
+        self.choices.blockSignals(False)
+
     def _pick_camera(self, i: int):
-        index = self.choices.itemData(i)
-        if index is not None:
-            self.device.config.camera = int(index)
-            self.config_changed.emit()
+        camera = self.choices.itemData(i)
+        if camera is None:
+            return
+        cfg = self.device.config
+        cfg.camera, cfg.camera_id = int(camera.index), camera.id
+        cfg.camera_name = camera.name
+        self.config_changed.emit()
 
     def _pick_ndi(self, i: int):
         name = self.choices.itemData(i)

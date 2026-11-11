@@ -18,10 +18,18 @@ in ``.bidsignore`` until BEP047 is part of the specification.
 
 Frames are written as they arrive, at the nominal rate the file declares;
 the physio file says when each was really taken.
+
+In the session pipeline, a video is a :class:`VideoSource`: one row per
+frame (its time and number), while the images wait in the source for the
+:class:`VideoWriter`, g.Pype carrying samples rather than images::
+
+    VideoSource ── VideoWriter   (the MP4 and its frame times, while
+                                  recording)
 """
 from __future__ import annotations
 
-import queue
+import re
+import sys
 import threading
 import time
 from collections import deque
@@ -30,13 +38,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import gpype as gp
 import numpy as np
 
 from .. import __version__, clock
 from ..bids import NA, GzipTsvWriter, write_json
+from ..pipeline import BidsWriter, ClockMap, PushSource
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget, Timeline, start_time)
-from .push import ClockMap
 
 #: BIDS datatype of video (BEP047): behavioural.
 DATATYPE = "beh"
@@ -109,7 +118,8 @@ class WebcamSource(FrameSource):
             self.rate = float(reported)
         self.capture = capture
         h, w = image.shape[:2]
-        self.info = {"name": f"Camera {self.index}", "size": f"{w}×{h}"}
+        self.info = {"name": self.name or f"Camera {self.index}",
+                     "size": f"{w}×{h}"}
 
     def read(self):
         ok, image = self.capture.read()
@@ -122,26 +132,87 @@ class WebcamSource(FrameSource):
             self.capture = None
 
 
-def find_cameras(limit: int = 6) -> list[tuple[int, str]]:
-    """(index, name) of the cameras: names from Qt where it knows them
-    (in the system's order, which OpenCV's indices follow), else
-    "Camera <n>"."""
-    names = []
+@dataclass
+class Camera:
+    """A camera on this computer: OpenCV's number for it, its name, and
+    the system's identifier for it (stable while the number is not: it
+    shifts as cameras come and go)."""
+    index: int
+    name: str
+    id: str = ""
+
+
+def opencv_indices(ids: list[str], platform: str = sys.platform
+                   ) -> list[Optional[int]]:
+    """OpenCV's camera number for each of the system's camera
+    identifiers (Qt's ``QCameraDevice.id()``), or None where it cannot
+    tell.
+
+    - **macOS**: OpenCV's AVFoundation backend numbers the cameras in
+      the order of their unique identifiers (the list sorted with
+      NSString ``compare:``, an ordinal comparison), which is also what
+      Qt gives as the id; the system's own order is another one.
+    - **Linux**: V4L2 numbers them by their device file, /dev/video<n>.
+    - **Windows**: OpenCV's Media Foundation backend and Qt both list
+      Media Foundation's devices, in its order.
+    """
+    if platform == "darwin":
+        ranked = sorted(ids)
+        return [ranked.index(i) for i in ids]
+    if platform.startswith("linux"):
+        out = []
+        for i in ids:
+            m = re.search(r"/dev/video(\d+)$", i)
+            out.append(int(m.group(1)) if m else None)
+        return out
+    return list(range(len(ids)))
+
+
+def find_cameras(limit: int = 6) -> list[Camera]:
+    """The cameras, in the system's order, each with OpenCV's number for
+    it: named by Qt where it can list them, else found by trying
+    OpenCV's numbers (and called "Camera <n>")."""
+    devices = []
     try:
         from PySide6.QtMultimedia import QMediaDevices
-        names = [d.description() for d in QMediaDevices.videoInputs()]
+        devices = [(d.description(), bytes(d.id()).decode(errors="replace"))
+                   for d in QMediaDevices.videoInputs()]
     except Exception:  # noqa: BLE001
         pass
-    if names:
-        return list(enumerate(names))
+    if devices:
+        indices = opencv_indices([i for _, i in devices])
+        return [Camera(index, name, ident)
+                for (name, ident), index in zip(devices, indices)
+                if index is not None]
     import cv2
     found = []
     for index in range(limit):
         capture = cv2.VideoCapture(index)
         if capture.isOpened():
-            found.append((index, f"Camera {index}"))
+            found.append(Camera(index, f"Camera {index}"))
         capture.release()
     return found
+
+
+def resolve_camera(index: int, ident: str, name: str = "") -> int:
+    """OpenCV's number, now, for the camera chosen as ``ident`` (or
+    ``index``, when it was chosen by number).
+
+    Raises:
+        ConnectionError: If the chosen camera is not connected.
+    """
+    if not ident:
+        return int(index)
+    cameras = find_cameras()
+    for camera in cameras:
+        if camera.id == ident:
+            return camera.index
+    if not cameras:
+        # The cameras could not be listed: trust the number.
+        return int(index)
+    raise ConnectionError(
+        f"The camera {name or ident} is not connected. Connect it, or "
+        f"choose another in the settings.")
 
 
 # -- NDI (OBS) ----------------------------------------------------------------------------
@@ -291,73 +362,116 @@ class VideoConfig(DeviceConfig):
     latency_ms: float = 0.0
 
 
-class _Recording:
-    """One recording's files, written on their own thread so a slow disk
-    cannot hold up the frames."""
+class VideoSource(PushSource):
+    """A video's frames in the session pipeline: one row per frame,
+    ``[time, frame number]``. The images stay here, the latest
+    ``QUEUE_FRAMES`` of them, for :class:`VideoWriter` to fetch."""
 
-    def __init__(self, video: Path, frames: Path, rate_of):
-        """``rate_of()`` gives the source's frame rate: read when the
-        first frame is written, as a stream says its rate only with its
-        frames."""
-        self.video, self.frames = video, frames
-        self.rate_of = rate_of
-        self.rate = float(rate_of())
-        self.queue: queue.Queue = queue.Queue(maxsize=QUEUE_FRAMES)
-        self.count = 0
-        self.dropped = 0
-        self.first: Optional[float] = None
-        self.last: Optional[float] = None
-        self.size: Optional[tuple[int, int]] = None
-        self.error: Optional[str] = None
-        self._thread = threading.Thread(target=self._write, daemon=True,
-                                        name="video-writer")
-        self._thread.start()
+    def __init__(self, rate: float, **kwargs):
+        super().__init__(["FRAME"], [""], rate, **kwargs)
+        self._images: dict[int, np.ndarray] = {}
+        self._order: deque[int] = deque()
+        self._images_lock = threading.Lock()
+        self._next = 0
 
     def add(self, frame: Frame) -> None:
-        try:
-            self.queue.put_nowait(frame)
-        except queue.Full:
-            self.dropped += 1
+        with self._images_lock:
+            number = self._next
+            self._next += 1
+            self._images[number] = frame.image
+            self._order.append(number)
+            while len(self._order) > QUEUE_FRAMES:
+                self._images.pop(self._order.popleft(), None)
+        self.push([frame.time, number])
 
-    def _write(self):
+    def image(self, number: int) -> Optional[np.ndarray]:
+        with self._images_lock:
+            return self._images.get(number)
+
+
+class VideoWriter(BidsWriter):
+    """The frames of a :class:`VideoSource`, while recording, as an MP4
+    (at the source's frame rate, read at the first frame: a stream says
+    its rate only with its frames) and every frame's time as a physio
+    file (``meta["frames"]``). A frame whose image is gone by the time it
+    is written (a disk too slow) counts as dropped."""
+
+    extension = ".mp4"
+
+    def __init__(self, name: str, source: VideoSource, rate_of, **kwargs):
+        super().__init__(name, **kwargs)
+        self.source = source
+        self.rate_of = rate_of
+        self.video: Optional[Path] = None
+        self.frames: Optional[Path] = None
+
+    def _open(self, path, meta):
+        self.video, self.frames = Path(path), Path(meta["frames"])
+        self.epoch = float(meta.get("epoch", 0.0))
+        self.rate = float(self.rate_of())
+        self.count = self.dropped = 0
+        self.first = self.last = None
+        self.size: Optional[tuple[int, int]] = None
+        self._writer = self._times = None
+
+    def _write(self, block, first_index):
         import cv2
-        writer = times = None
-        try:
-            while True:
-                frame = self.queue.get()
-                if frame is None:
-                    break
-                image = frame.image
-                if writer is None:
-                    self.rate = float(self.rate_of())
-                    h, w = image.shape[:2]
-                    self.size = (w, h)
-                    self.video.parent.mkdir(parents=True, exist_ok=True)
-                    writer = cv2.VideoWriter(
-                        str(self.video), cv2.VideoWriter_fourcc(*FOURCC),
-                        self.rate, (w, h))
-                    if not writer.isOpened():
-                        raise RuntimeError(f"could not write {self.video}")
-                    times = GzipTsvWriter(self.frames)
-                if image.shape[1::-1] != self.size:
-                    image = cv2.resize(image, self.size)
-                writer.write(image)
-                times.write([frame.time, self.count])
-                if self.first is None:
-                    self.first = frame.time
-                self.last = frame.time
-                self.count += 1
-        except Exception as error:  # noqa: BLE001
-            self.error = str(error)
-        finally:
-            if writer is not None:
-                writer.release()
-            if times is not None:
-                times.close()
+        for row in block:
+            image = self.source.image(int(round(float(row[1]))))
+            if image is None:
+                self.dropped += 1
+                continue
+            t = self.epoch + float(row[0])
+            if self._writer is None:
+                self.rate = float(self.rate_of())
+                h, w = image.shape[:2]
+                self.size = (w, h)
+                writer = cv2.VideoWriter(
+                    str(self.video), cv2.VideoWriter_fourcc(*FOURCC),
+                    self.rate, (w, h))
+                if not writer.isOpened():
+                    raise RuntimeError(f"could not write {self.video}")
+                self._writer = writer
+                self._times = GzipTsvWriter(self.frames)
+            if image.shape[1::-1] != self.size:
+                image = cv2.resize(image, self.size)
+            self._writer.write(image)
+            self._times.write([t, self.count])
+            if self.first is None:
+                self.first = t
+            self.last = t
+            self.count += 1
 
-    def close(self) -> None:
-        self.queue.put(None)
-        self._thread.join(timeout=30)
+    def _close(self):
+        if self._writer is not None:
+            self._writer.release()
+            self._writer = None
+        if self._times is not None:
+            self._times.close()
+            self._times = None
+        return {"first": self.first, "last": self.last, "count": self.count,
+                "dropped": self.dropped, "rate": self.rate,
+                "size": list(self.size) if self.size else None}
+
+
+@dataclass
+class _Recording:
+    """What one recording wrote, for its sidecars."""
+    video: Path
+    frames: Path
+    rate: float
+    count: int
+    dropped: int
+    first: float
+    last: float
+    size: Optional[tuple[int, int]]
+
+
+@dataclass
+class Graph:
+    """A video's nodes in the session pipeline."""
+    source: VideoSource
+    writer: VideoWriter
 
 
 class VideoDevice(Device):
@@ -372,63 +486,57 @@ class VideoDevice(Device):
     def __init__(self, config, project_folder: Path, simulate: bool = False):
         super().__init__(config, project_folder, simulate)
         self.source: Optional[FrameSource] = None
+        self.graph: Optional[Graph] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
         self._latest: Optional[Frame] = None
         self._times: deque[float] = deque(maxlen=90)
-        self._recording: Optional[_Recording] = None
         self._target: Optional[RecordingTarget] = None
-        self._record_from = 0.0
 
     def make_source(self) -> FrameSource:
         raise NotImplementedError
 
-    # -- acquisition ---------------------------------------------------------
+    # -- the session pipeline --------------------------------------------------
 
-    def start(self) -> None:
-        with self._lock:
-            if self.state != IDLE:
-                return
-            self.error = None
-            self._set_state(STARTING)
-            source = SimulatedSource(self.config.label) if self.simulated \
-                else self.make_source()
-            try:
-                source.open()
-            except BaseException:
-                try:
-                    source.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                self._set_state(IDLE)
-                raise
-            self.source = source
-            self._latest = None
-            self._times.clear()
-            self._running = True
-            self._thread = threading.Thread(target=self._run, daemon=True,
-                                            name=f"{self.TYPE}-frames")
-            self._thread.start()
-            self._set_state(RUNNING)
+    def build(self, pipeline: gp.Pipeline) -> None:
+        frames = SimulatedSource(self.config.label) if self.simulated \
+            else self.make_source()
+        source = VideoSource(float(frames.rate or 30.0),
+                             name=self.node_name("source"))
+        writer = VideoWriter(self.node_name("bids"), source,
+                             lambda: frames.rate or 30.0)
+        pipeline.connect(source, writer)
+        self.source = frames
+        self.graph = Graph(source, writer)
 
-    def stop(self) -> None:
-        with self._lock:
-            if self.state == IDLE:
-                return
-            self._set_state(STOPPING)
+    def opened(self) -> None:
+        try:
+            self.source.open()
+        except BaseException:
             try:
-                if self.recording:
-                    self.end_recording()
+                self.source.close()
             except Exception:  # noqa: BLE001
                 pass
-            self._running = False
-            if self._thread:
-                self._thread.join(timeout=3)
-                self._thread = None
-            if self.source is not None:
-                self.source.close()
-                self.source = None
-            self._set_state(IDLE)
+            raise
+        self._latest = None
+        self._times.clear()
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"{self.TYPE}-frames")
+        self._thread.start()
+
+    def closing(self) -> None:
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=3)
+            self._thread = None
+        if self.source is not None:
+            self.source.close()
+
+    def closed(self) -> None:
+        self.graph = None
+        self.source = None
+        self._target = None
 
     def _run(self):
         misses = 0
@@ -450,9 +558,9 @@ class VideoDevice(Device):
             misses = 0
             self._latest = frame
             self._times.append(frame.time)
-            recording = self._recording
-            if recording is not None and frame.time >= self._record_from:
-                recording.add(frame)
+            graph = self.graph
+            if graph is not None:
+                graph.source.add(frame)
 
     # -- view ------------------------------------------------------------------
 
@@ -470,7 +578,8 @@ class VideoDevice(Device):
 
     @property
     def recording(self) -> bool:
-        return self._recording is not None
+        graph = self.graph
+        return bool(graph and graph.writer.recording)
 
     def paths(self, target: RecordingTarget) -> tuple[Path, Path]:
         label = self.config.label or self.TYPE
@@ -482,31 +591,41 @@ class VideoDevice(Device):
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
         with self._lock:
-            if self.source is None:
+            graph = self.graph
+            if graph is None:
                 raise RuntimeError(f"The {self.NAME} is not running.")
             video, frames = self.paths(target)
-            self._record_from = target.started
+            self.invoke(graph.writer, "begin", {
+                "path": str(video),
+                "meta": {"frames": str(frames),
+                         "epoch": graph.source.epoch}})
             self._target = target
-            source = self.source
-            self._recording = _Recording(video, frames, lambda: source.rate)
             return [video, frames]
 
     def end_recording(self) -> RecordedFiles:
         with self._lock:
-            recording, target = self._recording, self._target
-            if recording is None or target is None:
+            graph, target = self.graph, self._target
+            if graph is None or target is None:
                 return RecordedFiles()
-            self._recording = self._target = None
-            recording.close()
+            self._target = None
+            summary = self.invoke(graph.writer, "end")
+            writer = graph.writer
             info = dict(self.source.info) if self.source else {}
-
-        video, frames = recording.video, recording.frames
-        if recording.count == 0:
+        count = int(summary.get("count") or 0)
+        if count == 0:
             return RecordedFiles()
+        size = summary.get("size")
+        recording = _Recording(writer.video, writer.frames,
+                               float(summary["rate"]), count,
+                               int(summary.get("dropped") or 0),
+                               float(summary["first"]),
+                               float(summary["last"]),
+                               tuple(size) if size else None)
 
         def finalize(reference: Optional[Timeline]) -> None:
             self._write_sidecars(target, recording, info, reference)
 
+        video, frames = recording.video, recording.frames
         moment = datetime.fromtimestamp(recording.first)
         sidecars = [_json(video), _json(frames)]
         return RecordedFiles(
@@ -583,7 +702,13 @@ class VideoDevice(Device):
 @dataclass
 class WebcamConfig(VideoConfig):
     label: str = "webcam"
+    #: OpenCV's number for the camera, when it was chosen; worked out
+    #: again from camera_id at each connect, as numbers shift.
     camera: int = 0
+    #: The system's identifier for the chosen camera, and its name; empty
+    #: for a camera chosen by number only.
+    camera_id: str = ""
+    camera_name: str = ""
     width: int = 1280
     height: int = 720
     fps: float = 30.0
@@ -601,8 +726,12 @@ class WebcamDevice(VideoDevice):
 
     def make_source(self):
         cfg = self.config
-        return WebcamSource(int(cfg.camera), int(cfg.width), int(cfg.height),
-                            float(cfg.fps), float(cfg.latency_ms))
+        index = resolve_camera(int(cfg.camera), str(cfg.camera_id or ""),
+                               str(cfg.camera_name or ""))
+        source = WebcamSource(index, int(cfg.width), int(cfg.height),
+                              float(cfg.fps), float(cfg.latency_ms))
+        source.name = str(cfg.camera_name or "")
+        return source
 
 
 @dataclass

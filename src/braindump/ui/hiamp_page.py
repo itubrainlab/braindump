@@ -10,14 +10,13 @@ import pyqtgraph as pg
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QLabel, QPushButton, QVBoxLayout,
                                QWidget)
-from rhinorecorder import presets
-from rhinorecorder.ui.main_window import SourceToggle
 
 from ..devices.hiamp import (NO_FILTER, RATES, HIampDevice,
                              describe_amplifier_filter)
+from .. import presets
 from . import icons, theme
 from .device_page import DevicePage
-from .forms import ConfigForm, hint, panel, row
+from .forms import ConfigForm, hint, panel, row, SourceToggle
 
 SECONDS = 10
 PAGE_SIZES = (8, 16, 32, 64)
@@ -26,8 +25,8 @@ MAX_POINTS = 2000
 
 
 class MultiScope(QWidget):
-    """Stacked EEG traces of one page of channels, sweeping like Rhino
-    Recorder's, with the trigger channel's onsets marked."""
+    """Stacked EEG traces of one page of channels, sweeping like the
+    Unicorn's, with the trigger channel's onsets marked."""
 
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -1,11 +1,11 @@
-"""Icons: Rhino Recorder's, and a few of brAIn dump's own, drawn in the
-same way."""
+"""Icons, drawn: the toolbar's and status bar's (:mod:`.glyphs`), and
+brAIn dump's own, drawn in the same way."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainterPath, QPen
-from rhinorecorder.ui.icons import (_icon, battery, gear, network, play,
-                                    question, record, stop, wifi)
+from .glyphs import (_icon, battery, gear, network, play, question,
+                     record, stop, wifi)
 
 from . import theme
 

@@ -34,14 +34,13 @@ from typing import Callable, Optional
 
 import gpype as gp
 import numpy as np
-from rhinorecorder.nodes import GatedLogger, SweepTap
 
 from .. import __version__, clock
-from ..bids import NA, GzipTsvWriter, write_json
+from ..bids import NA, write_json
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget, Timeline,
                    start_time)
-from .push import ClockMap, PhysioLogger, PushSource
+from ..pipeline import ClockMap, PhysioWriter, PushSource, SweepTap
 
 # -- the protocol ----------------------------------------------------------------
 
@@ -408,14 +407,30 @@ class _Simulated:
 
 # -- BIDS --------------------------------------------------------------------------------
 
+class BeatWriter(PhysioWriter):
+    """The beats as BIDS physioevents: onset (clock time), no duration,
+    "beat", the RR interval that ended at it, and the heart rate."""
+
+    def _write(self, block, first_index):
+        for row in block:
+            t = self.epoch + float(row[0])
+            if self.first_sample is None:
+                self.first_sample = t
+            self.last_sample = t
+            self._writer.write([t, None, "beat", round(float(row[1]), 4),
+                                int(round(float(row[2])))])
+
+
 @dataclass
 class Graph:
-    pipeline: gp.Pipeline
+    """The strap's nodes in the session pipeline."""
     ecg: PushSource
     ecg_tap: SweepTap
-    ecg_logger: PhysioLogger
+    ecg_writer: PhysioWriter
+    beats: PushSource
+    beat_writer: BeatWriter
     acc: Optional[PushSource] = None
-    acc_logger: Optional[PhysioLogger] = None
+    acc_writer: Optional[PhysioWriter] = None
 
 
 class PolarDevice(Device):
@@ -437,8 +452,6 @@ class PolarDevice(Device):
         self.contact: Optional[bool] = None
         #: Recent beats: (time, RR interval s, heart rate), for the view.
         self.beats: deque[tuple[float, float, int]] = deque(maxlen=600)
-        self._recorded_beats: list[tuple[float, float, int]] = []
-        self._record_from: Optional[float] = None
         self._target: Optional[RecordingTarget] = None
         self._clocks = {ECG: ClockMap(), ACC: ClockMap()}
         self._last_stamp: dict[int, float] = {}
@@ -471,127 +484,95 @@ class PolarDevice(Device):
         self.heart_rate = hr.bpm
         self.contact = hr.contact
         times = self._beat_clock.beats(hr.rr, received)
+        graph = self.graph
         with self._beats_lock:
             for t, rr in zip(times, hr.rr):
                 beat = (t, rr, round(60 / rr) if rr else hr.bpm)
                 self.beats.append(beat)
-                if self._record_from is not None and t >= self._record_from:
-                    self._recorded_beats.append(beat)
-
-    # -- acquisition ---------------------------------------------------------------
-
-    def start(self) -> None:
-        with self._lock:
-            if self.state != IDLE:
-                return
-            self.error = None
-            self._set_state(STARTING)
-            graph = link = None
-            try:
-                cfg = self.config
-                p = gp.Pipeline()
-                ecg = PushSource(["ECG"], ["uV"], ECG_RATE, name="ecg")
-                tap = SweepTap(seconds=8, name="ecg_view")
-                logger = PhysioLogger(name="ecg_bids")
-                p.connect(ecg, tap)
-                p.connect(ecg, logger)
-                graph = Graph(p, ecg, tap, logger)
-                if cfg.accelerometer:
-                    acc = PushSource(["ACC X", "ACC Y", "ACC Z"],
-                                     ["mG"] * 3, float(cfg.acc_rate),
-                                     name="acc")
-                    acc_logger = PhysioLogger(scale=0.001, name="acc_bids")
-                    p.connect(acc, acc_logger)
-                    graph.acc, graph.acc_logger = acc, acc_logger
-                p.add_error_handler(self._pipeline_failed)
-                p.start()
-                self.graph = graph
-                latency = cfg.latency_ms / 1000.0
-                self._clocks = {ECG: ClockMap(latency_s=latency),
-                                ACC: ClockMap(latency_s=latency)}
-                self._last_stamp = {}
-                self._beat_clock = BeatClock()
-                self.beats.clear()
-                self.heart_rate = self.contact = None
-                cls = _Simulated if self.simulated else _Link
-                link = cls(cfg, self._on_pmd, self._on_hr, self._fail)
-                link.start()
-            except BaseException:
-                if link is not None:
-                    try:
-                        link.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
                 if graph is not None:
-                    try:
-                        graph.pipeline.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
-                self.graph = None
-                self._set_state(IDLE)
-                raise
-            self.link = link
-            self._set_state(RUNNING)
+                    graph.beats.push(list(beat))
 
-    def stop(self) -> None:
-        with self._lock:
-            graph, link = self.graph, self.link
-            if graph is None:
-                return
-            self._set_state(STOPPING)
-            try:
-                if self.recording:
-                    self.end_recording()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if link is not None:
-                    link.stop()
-            finally:
-                try:
-                    graph.pipeline.stop()
-                finally:
-                    self.graph = self.link = None
-                    self._set_state(IDLE)
+    # -- the session pipeline ----------------------------------------------------
 
-    def _pipeline_failed(self, entry) -> None:
-        try:
-            message = str(entry["message"])
-        except Exception:  # noqa: BLE001
-            message = str(entry)
-        self._fail(message)
+    def build(self, pipeline: gp.Pipeline) -> None:
+        cfg = self.config
+        ecg = PushSource(["ECG"], ["uV"], ECG_RATE,
+                         name=self.node_name("ecg"))
+        tap = SweepTap(seconds=8, name=self.node_name("ecg_view"))
+        ecg_writer = PhysioWriter(self.node_name("ecg_bids"))
+        pipeline.connect(ecg, tap)
+        pipeline.connect(ecg, ecg_writer)
+        # One row per beat, about one a second.
+        beats = PushSource(["RR", "HR"], ["s", "bpm"], 1.0,
+                           name=self.node_name("beats"))
+        beat_writer = BeatWriter(self.node_name("beat_bids"))
+        pipeline.connect(beats, beat_writer)
+        graph = Graph(ecg, tap, ecg_writer, beats, beat_writer)
+        if cfg.accelerometer:
+            acc = PushSource(["ACC X", "ACC Y", "ACC Z"], ["mG"] * 3,
+                             float(cfg.acc_rate), name=self.node_name("acc"))
+            acc_writer = PhysioWriter(self.node_name("acc_bids"),
+                                      scale=0.001)
+            pipeline.connect(acc, acc_writer)
+            graph.acc, graph.acc_writer = acc, acc_writer
+        self.graph = graph
+
+    def opened(self) -> None:
+        cfg = self.config
+        latency = cfg.latency_ms / 1000.0
+        self._clocks = {ECG: ClockMap(latency_s=latency),
+                        ACC: ClockMap(latency_s=latency)}
+        self._last_stamp = {}
+        self._beat_clock = BeatClock()
+        self.beats.clear()
+        self.heart_rate = self.contact = None
+        cls = _Simulated if self.simulated else _Link
+        link = cls(cfg, self._on_pmd, self._on_hr, self._fail)
+        link.start()
+        self.link = link
+
+    def closing(self) -> None:
+        link, self.link = self.link, None
+        if link is not None:
+            link.stop()
+
+    def closed(self) -> None:
+        self.graph = None
+        self._target = None
 
     # -- recording ---------------------------------------------------------------------
 
     @property
     def recording(self) -> bool:
         graph = self.graph
-        return bool(graph and graph.ecg_logger.recording)
+        return bool(graph and graph.ecg_writer.recording)
 
-    def _loggers(self):
+    def _writers(self):
         graph = self.graph
-        out = [("ecg", graph.ecg, graph.ecg_logger)]
+        out = [("ecg", graph.ecg, graph.ecg_writer)]
         if graph.acc is not None:
-            out.append(("accel", graph.acc, graph.acc_logger))
+            out.append(("accel", graph.acc, graph.acc_writer))
         return out
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
         with self._lock:
-            if self.graph is None:
+            graph = self.graph
+            if graph is None:
                 raise RuntimeError("The Polar H10 is not connected.")
             paths = []
-            for recording, source, logger in self._loggers():
+            for recording, source, writer in self._writers():
                 path = target.dataset.path(target.entities, target.datatype,
                                            "physio", ".tsv.gz",
                                            recording=recording)
-                logger.epoch = source.epoch
-                logger.begin(str(path), logger.seen + 2)
+                self.invoke(writer, "begin", {
+                    "path": str(path), "meta": {"epoch": source.epoch}})
                 paths.append(path)
-            with self._beats_lock:
-                self._recorded_beats = []
-                self._record_from = target.started
+            events = paths[0].with_name(paths[0].name.replace(
+                "_physio.tsv.gz", "_physioevents.tsv.gz"))
+            self.invoke(graph.beat_writer, "begin", {
+                "path": str(events), "meta": {"epoch": graph.beats.epoch}})
             self._target = target
-            return paths
+            return paths + [events]
 
     def end_recording(self) -> RecordedFiles:
         with self._lock:
@@ -601,25 +582,18 @@ class PolarDevice(Device):
             # The strap sends a frame about every half second.
             time.sleep(0.6)
             written = {}
-            for recording, _, logger in self._loggers():
-                logger.end()
-                written[recording] = (Path(logger.path), logger.first_sample,
-                                      logger.last_sample,
-                                      logger.samples_written)
-            with self._beats_lock:
-                beats, self._recorded_beats = self._recorded_beats, []
-                self._record_from = None
+            for recording, _, writer in self._writers():
+                summary = self.invoke(writer, "end")
+                written[recording] = (Path(writer.path), summary.get("first"),
+                                      summary.get("last"),
+                                      int(summary.get("samples") or 0))
+            self.invoke(graph.beat_writer, "end")
+            events_path = Path(graph.beat_writer.path)
             self._target = None
             info = dict(self.link.info) if self.link else {}
             acc_rate = self.config.acc_rate
 
-        ecg_path, first = written["ecg"][0], written["ecg"][1]
-        events_path = ecg_path.with_name(ecg_path.name.replace(
-            "_physio.tsv.gz", "_physioevents.tsv.gz"))
-        out = GzipTsvWriter(events_path)
-        for t, rr, bpm in beats:
-            out.write([t, None, "beat", round(rr, 4), bpm])
-        out.close()
+        first = written["ecg"][1]
 
         def finalize(reference: Optional[Timeline]) -> None:
             self._write_sidecars(target, written, events_path, info,

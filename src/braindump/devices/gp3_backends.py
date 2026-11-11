@@ -30,7 +30,7 @@ from opengp3.calibration import (API_DEFAULT_POINTS, NINE_POINTS,
 from opengp3.lsl import CHANNELS as LSL_CHANNELS
 
 from .. import clock
-from .push import ClockMap
+from ..pipeline import ClockMap
 
 #: Channel names, in row order after the capture time.
 CHANNELS = [name for name, _, _ in LSL_CHANNELS]

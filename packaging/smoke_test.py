@@ -50,6 +50,7 @@ for name, value in drivers.items():
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from braindump.devices import DEVICE_TYPES, make_device  # noqa: E402
+from braindump.pipeline import SessionPipeline  # noqa: E402
 from braindump.project import Project  # noqa: E402
 from braindump.recording import Session, Subject  # noqa: E402
 from braindump.ui import theme  # noqa: E402
@@ -70,8 +71,11 @@ print("main window: ok", flush=True)
 
 devices = [make_device(k, c, project.folder) for k, c in
            project.devices.items()]
+# Connect all, as the app does: one g.Pype pipeline with every device.
+pipeline = SessionPipeline()
 for d in devices:
-    d.start()
+    d.attach(pipeline)
+pipeline.connect(devices)
 try:
     time.sleep(3)
     session = Session(project, devices)
@@ -79,8 +83,7 @@ try:
     time.sleep(3)
     result = session.stop()
 finally:
-    for d in devices:
-        d.stop()
+    pipeline.stop()
 assert not result.problems, result.problems
 subject = project.output_path / "sub-01"
 # Two EEG amplifiers (the Unicorn and the g.HIamp): each its own acq-.

@@ -3,7 +3,7 @@
     bootstrap.py <app resources folder> <library folder>
 
 Installs the pinned libraries (requirements.txt: g.Pype, PySide6, ...)
-from PyPI, then the bundled wheels (brAIn dump, Rhino Recorder,
+from PyPI, then the bundled wheels (brAIn dump,
 OpenGP3), into the library folder. A small window shows progress; without a
 display, progress goes to the terminal. The folder is
 named after the build, so an updated app sets up a fresh one; older

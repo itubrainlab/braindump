@@ -31,14 +31,13 @@ from typing import Callable, Optional
 
 import gpype as gp
 import numpy as np
-from rhinorecorder.nodes import SweepTap
 
 from .. import __version__, clock
 from ..bids import NA, write_json
 from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget, Timeline,
                    start_time)
-from .push import ClockMap, PhysioLogger, PushSource
+from ..pipeline import ClockMap, PhysioWriter, PushSource, SweepTap
 
 #: Sampling rates the unit can keep exactly (32768 Hz / an integer).
 RATES = (32.0, 51.2, 64.0, 128.0, 256.0)
@@ -322,10 +321,10 @@ class _Simulated:
 
 @dataclass
 class Graph:
-    pipeline: gp.Pipeline
+    """The Shimmer's nodes in the session pipeline."""
     source: PushSource
     tap: SweepTap
-    logger: PhysioLogger
+    writer: PhysioWriter
 
 
 class ShimmerDevice(Device):
@@ -362,86 +361,42 @@ class ShimmerDevice(Device):
             row.append(ppg_from_raw(int(raw_ppg or 0)))
         graph.source.push(row)
 
-    # -- acquisition -------------------------------------------------------------------
+    # -- the session pipeline ---------------------------------------------------------
 
-    def start(self) -> None:
-        with self._lock:
-            if self.state != IDLE:
-                return
-            self.error = None
-            self._set_state(STARTING)
-            graph = link = None
-            try:
-                labels = self._labels()
-                p = gp.Pipeline()
-                source = PushSource(labels, UNITS[:len(labels)],
-                                    float(self.config.sampling_rate),
-                                    name="shimmer")
-                tap = SweepTap(seconds=60, name="gsr_view")
-                logger = PhysioLogger(name="gsr_bids")
-                p.connect(source, tap)
-                p.connect(source, logger)
-                graph = Graph(p, source, tap, logger)
-                p.add_error_handler(self._pipeline_failed)
-                p.start()
-                self.graph = graph
-                self._clock = ClockMap(
-                    latency_s=self.config.latency_ms / 1000.0)
-                self.latest = None
-                cls = _Simulated if self.simulated else _Link
-                link = cls(self.config, self._on_sample, self._fail)
-                link.start()
-            except BaseException:
-                if link is not None:
-                    try:
-                        link.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
-                if graph is not None:
-                    try:
-                        graph.pipeline.stop()
-                    except Exception:  # noqa: BLE001
-                        pass
-                self.graph = None
-                self._set_state(IDLE)
-                raise
-            self.link = link
-            self._set_state(RUNNING)
+    def build(self, pipeline: gp.Pipeline) -> None:
+        labels = self._labels()
+        source = PushSource(labels, UNITS[:len(labels)],
+                            float(self.config.sampling_rate),
+                            name=self.node_name("source"))
+        tap = SweepTap(seconds=60, name=self.node_name("view"))
+        writer = PhysioWriter(self.node_name("bids"))
+        pipeline.connect(source, tap)
+        pipeline.connect(source, writer)
+        self.graph = Graph(source, tap, writer)
 
-    def stop(self) -> None:
-        with self._lock:
-            graph, link = self.graph, self.link
-            if graph is None:
-                return
-            self._set_state(STOPPING)
-            try:
-                if self.recording:
-                    self.end_recording()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                if link is not None:
-                    link.stop()
-            finally:
-                try:
-                    graph.pipeline.stop()
-                finally:
-                    self.graph = self.link = None
-                    self._set_state(IDLE)
+    def opened(self) -> None:
+        self._clock = ClockMap(latency_s=self.config.latency_ms / 1000.0)
+        self.latest = None
+        cls = _Simulated if self.simulated else _Link
+        link = cls(self.config, self._on_sample, self._fail)
+        link.start()
+        self.link = link
 
-    def _pipeline_failed(self, entry) -> None:
-        try:
-            message = str(entry["message"])
-        except Exception:  # noqa: BLE001
-            message = str(entry)
-        self._fail(message)
+    def closing(self) -> None:
+        link, self.link = self.link, None
+        if link is not None:
+            link.stop()
+
+    def closed(self) -> None:
+        self.graph = None
+        self._target = None
 
     # -- recording -------------------------------------------------------------------
 
     @property
     def recording(self) -> bool:
         graph = self.graph
-        return bool(graph and graph.logger.recording)
+        return bool(graph and graph.writer.recording)
 
     def begin_recording(self, target: RecordingTarget) -> list[Path]:
         with self._lock:
@@ -450,8 +405,8 @@ class ShimmerDevice(Device):
                 raise RuntimeError("The Shimmer is not connected.")
             path = target.dataset.path(target.entities, target.datatype,
                                        "physio", ".tsv.gz", recording="gsr")
-            graph.logger.epoch = graph.source.epoch
-            graph.logger.begin(str(path), graph.logger.seen + 1)
+            self.invoke(graph.writer, "begin", {
+                "path": str(path), "meta": {"epoch": graph.source.epoch}})
             self._target = target
             return [path]
 
@@ -460,13 +415,13 @@ class ShimmerDevice(Device):
             graph, target = self.graph, self._target
             if graph is None or target is None:
                 return RecordedFiles()
+            # The samples still on their way over Bluetooth.
             time.sleep(0.2)
-            logger = graph.logger
-            logger.end()
+            summary = self.invoke(graph.writer, "end")
             self._target = None
-            path = Path(logger.path)
-            first, last = logger.first_sample, logger.last_sample
-            samples = logger.samples_written
+            path = Path(graph.writer.path)
+            first, last = summary.get("first"), summary.get("last")
+            samples = int(summary.get("samples") or 0)
             info = dict(self.link.info) if self.link else {}
 
         def finalize(reference: Optional[Timeline]) -> None:

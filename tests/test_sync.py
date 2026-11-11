@@ -14,11 +14,12 @@ import numpy as np
 import pylsl
 import pyedflib
 
+from conftest import connect_all
 from braindump import clock
 from braindump.bids import read_tsv
 from braindump.devices import make_device
 from braindump.devices.base import Timeline, start_time
-from braindump.devices.push import ClockMap
+from braindump.pipeline import ClockMap
 from braindump.devices.unicorn import fit_timing
 from braindump.project import Project
 from braindump.recording import Session, Subject
@@ -105,8 +106,7 @@ def test_trigger_and_marker_land_on_the_same_eeg_sample(tmp_path):
     project.add_device("gp3", {"simulate": True})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
-    for d in devices:
-        d.start()
+    pipeline = connect_all(devices)
     sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         lsl = devices[1]
@@ -127,8 +127,7 @@ def test_trigger_and_marker_land_on_the_same_eeg_sample(tmp_path):
         result = session.stop()
     finally:
         sender.close()
-        for d in devices:
-            d.stop()
+        pipeline.stop()
     assert not result.problems
     eeg = project.output_path / "sub-01" / "eeg"
     _, rows = read_tsv(eeg / "sub-01_task-sync_events.tsv")

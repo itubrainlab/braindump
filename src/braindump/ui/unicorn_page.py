@@ -1,5 +1,5 @@
-"""The Unicorn's page: Rhino Recorder's data viewer, signal quality and
-power spectrum, and the headset's settings."""
+"""The Unicorn's page: the data viewer, signal quality and power
+spectrum, and the headset's settings."""
 from __future__ import annotations
 
 import threading
@@ -7,16 +7,18 @@ import threading
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QLabel, QPushButton,
                                QSplitter, QWidget)
-from rhinorecorder import layout, presets, quality, spectrum
-from rhinorecorder.ui.main_window import SourceToggle
-from rhinorecorder.ui.scope import Scope
-from rhinorecorder.ui.spectrum import SpectrumView
 
-from ..devices.unicorn import (GROUPS, HIGHPASS, LOWPASS, NYQUIST,
-                               UnicornDevice, find_headsets)
-from . import icons, theme
+from ..devices.unicorn import (EEG, GROUPS, HIGHPASS, LOWPASS, NUM_EEG,
+                               HybridBlack,
+                               NYQUIST, SAMPLING_RATE, UnicornDevice,
+                               find_headsets)
+from .. import presets
+from . import icons, quality, theme
+from . import power_spectrum as spectrum
+from .scope import Scope
+from .spectrum_view import SpectrumView
 from .device_page import DevicePage
-from .forms import ConfigForm, hint, panel, row
+from .forms import ConfigForm, hint, panel, row, SourceToggle
 
 
 class _Found(QObject):
@@ -30,7 +32,7 @@ class UnicornPage(DevicePage):
         super().__init__(device, parent)
         cfg = device.config
 
-        # View controls, in the header as in Rhino Recorder's toolbar.
+        # View controls, in the page's header.
         self.scaling = self._combo(presets.SCALINGS, cfg.view_scaling)
         self.filter = self._combo(presets.FILTERS, cfg.view_filter)
         self.notch = self._combo(presets.NOTCHES, cfg.view_notch)
@@ -83,7 +85,7 @@ class UnicornPage(DevicePage):
     def _name_channels(self):
         names = self.device.config.electrode_names()
         self.scope.plot_item.getAxis("left").setTicks([[
-            (layout.NUM_EEG - i - 0.5, name) for i, name in enumerate(names)]
+            (NUM_EEG - i - 0.5, name) for i, name in enumerate(names)]
             + [(-0.5, "TRIG")]])
 
     # -- settings ----------------------------------------------------------------
@@ -108,7 +110,8 @@ class UnicornPage(DevicePage):
                      "(no hardware)")
         head.number("latency_ms", "Bluetooth delay", 0, 500,
                     "Taken off the time stamps, so the EEG lines up with "
-                    "the other devices (g.tec measured 40 ms).", " ms", 0)
+                    "the other devices (g.tec measured "
+                    f"{HybridBlack.DEVICE_DELAY_MS} ms).", " ms", 0)
         head.boolean("test_signal", "Test signal",
                      "The headset's internal square wave instead of the "
                      "electrodes")
@@ -214,7 +217,7 @@ class UnicornPage(DevicePage):
         if state != "running" and hasattr(self, "scope"):
             self.scope.clear()
             self.spectrum.clear()
-            self.scope.set_quality([quality.UNKNOWN] * layout.NUM_EEG)
+            self.scope.set_quality([quality.UNKNOWN] * NUM_EEG)
             self.quality.reset()
             self._quality_seen = 0
 
@@ -226,21 +229,20 @@ class UnicornPage(DevicePage):
         buffer, total = (graph.raw if raw else graph.scope).sweep()
         filled = min(total, buffer.shape[0])
         if raw and filled:
-            buffer[:, layout.EEG] -= buffer[:filled, layout.EEG].mean(axis=0)
-        self.scope.show_sweep(buffer, total, layout.EEG,
-                              layout.TRIGGER_CHANNEL)
+            buffer[:, EEG] -= buffer[:filled, EEG].mean(axis=0)
+        self.scope.show_sweep(buffer, total, EEG, graph.trigger)
         # Signal quality, from the raw EEG not yet judged.
         seen = graph.raw.total
         new = seen - self._quality_seen
         if new > 0:
             rows = graph.raw.latest(min(new, graph.raw.capacity))
-            self.quality.update(rows[:, layout.EEG])
+            self.quality.update(rows[:, EEG])
             self._quality_seen = seen
             self.scope.set_quality(self.quality.verdicts())
         if self.spectrum_panel.isVisible():
             tap = graph.raw if self.spectrum_source.is_raw() else graph.scope
-            samples = int(spectrum.WINDOW_S * layout.SAMPLING_RATE)
-            self.spectrum.show_eeg(tap.latest(samples)[:, layout.EEG])
+            samples = int(spectrum.WINDOW_S * SAMPLING_RATE)
+            self.spectrum.show_eeg(tap.latest(samples)[:, EEG])
 
     def status_icons(self):
         d = self.device

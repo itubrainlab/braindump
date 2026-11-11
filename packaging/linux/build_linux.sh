@@ -7,7 +7,7 @@
 # git and the project's .venv (pip install -e ".[test,shimmer]").
 #
 # The package carries its own Python (python-build-standalone, which uv
-# downloads) and the wheels of brAIn dump, Rhino Recorder and OpenGP3;
+# downloads) and the wheels of brAIn dump and OpenGP3;
 # see ../common.sh. g.Pype publishes no ARM Linux build, and PySide6's
 # Linux wheels need glibc 2.34, hence x86_64 and manylinux_2_34.
 set -euo pipefail

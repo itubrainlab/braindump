@@ -2,9 +2,9 @@
 # bundled wheels and the pinned requirements. Source it after setting
 # ROOT, WORK and DEV_PY.
 #
-# The packages bundle brAIn dump's wheel and those of its two lab
-# libraries, Rhino Recorder and OpenGP3 (both MIT), which it depends on by
-# git URL: installing them from git would need git on every computer.
+# The packages bundle brAIn dump's wheel and that of its lab library,
+# OpenGP3 (MIT), which it depends on by git URL: installing it from git
+# would need git on every computer.
 # Everything else, g.Pype and g.tec's gtec-unicorn driver among it, is
 # installed from PyPI on first launch (see bootstrap.py): g.tec's licences
 # forbid redistributing g.Pype and the driver in a bundle.
