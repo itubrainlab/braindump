@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build "brAIn dump.app" and a DMG for macOS (Apple Silicon).
+# Build "brAIn stream.app" and a DMG for macOS (Apple Silicon).
 #
 #     packaging/macos/build_app.sh
 #
@@ -8,7 +8,7 @@
 # library versions and PySide6 for the icon.
 #
 # The app carries its own Python (a relocatable python-build-standalone
-# build, as uv installs them) and the wheels of brAIn dump
+# build, as uv installs them) and the wheels of brAIn stream
 # and OpenGP3; see ../common.sh. Its first launch installs g.Pype, g.tec's
 # gtec-unicorn driver and the other pinned libraries from PyPI. gtec-unicorn's
 # macOS wheels need macOS 14 on Apple Silicon, hence the app's minimum.
@@ -32,9 +32,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 source "$HERE/../common.sh"
 BUILD_ID="$VERSION-$COMMIT-$ARCH"
-APP="$OUT/brAIn dump.app"
+APP="$OUT/brAIn stream.app"
 RES="$APP/Contents/Resources"
-echo "Building brAIn dump $BUILD_ID"
+echo "Building brAIn stream $BUILD_ID"
 
 build_wheels
 MACOSX_DEPLOYMENT_TARGET=14.0 pin_requirements \
@@ -52,20 +52,20 @@ cp "$WORK/requirements.txt" "$RES/requirements.txt"
 cp "$HERE/../bootstrap.py" "$RES/bootstrap.py"
 cp "$ROOT/LICENSE" "$RES/LICENSE"
 echo "$BUILD_ID" > "$RES/build-id"
-"$DEV_PY" "$HERE/make_icns.py" "$ROOT/src/braindump/resources/braindump.svg" \
-    "$RES/braindump.icns" >/dev/null
-install -m 755 "$HERE/launcher.sh" "$APP/Contents/MacOS/braindump"
+"$DEV_PY" "$HERE/make_icns.py" "$ROOT/src/brainstream/resources/brainstream.svg" \
+    "$RES/brainstream.icns" >/dev/null
+install -m 755 "$HERE/launcher.sh" "$APP/Contents/MacOS/brainstream"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>brAIn dump</string>
-    <key>CFBundleDisplayName</key><string>brAIn dump</string>
-    <key>CFBundleIdentifier</key><string>dk.itu.brainlab.braindump</string>
-    <key>CFBundleExecutable</key><string>braindump</string>
-    <key>CFBundleIconFile</key><string>braindump</string>
+    <key>CFBundleName</key><string>brAIn stream</string>
+    <key>CFBundleDisplayName</key><string>brAIn stream</string>
+    <key>CFBundleIdentifier</key><string>dk.itu.brainlab.brainstream</string>
+    <key>CFBundleExecutable</key><string>brainstream</string>
+    <key>CFBundleIconFile</key><string>brainstream</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$VERSION</string>
     <key>CFBundleVersion</key><string>$BUILD_ID</string>
@@ -73,11 +73,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSApplicationCategoryType</key><string>public.app-category.education</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSCameraUsageDescription</key>
-    <string>brAIn dump records video from the webcam.</string>
+    <string>brAIn stream records video from the webcam.</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>brAIn dump reads the Unicorn EEG headset, the Polar H10 and the Shimmer over Bluetooth.</string>
+    <string>brAIn stream reads the Unicorn EEG headset, the Polar H10 and the Shimmer over Bluetooth.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>brAIn dump reads eye trackers over the Open Gaze API and receives LSL streams and triggers.</string>
+    <string>brAIn stream reads eye trackers over the Open Gaze API and receives LSL streams and triggers.</string>
 </dict>
 </plist>
 PLIST
@@ -91,9 +91,9 @@ STAGE="$WORK/dmg"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-DMG="$OUT/brAIndump-$VERSION-macos-$ARCH.dmg"
+DMG="$OUT/brAInstream-$VERSION-macos-$ARCH.dmg"
 rm -f "$DMG"
-hdiutil create -quiet -volname "brAIn dump" -srcfolder "$STAGE" -ov \
+hdiutil create -quiet -volname "brAIn stream" -srcfolder "$STAGE" -ov \
     -format UDZO "$DMG"
 
 echo "Built:"

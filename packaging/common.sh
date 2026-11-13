@@ -2,14 +2,14 @@
 # bundled wheels and the pinned requirements. Source it after setting
 # ROOT, WORK and DEV_PY.
 #
-# The packages bundle brAIn dump's wheel and that of its lab library,
+# The packages bundle brAIn stream's wheel and that of its lab library,
 # OpenGP3 (MIT), which it depends on by git URL: installing it from git
 # would need git on every computer.
 # Everything else, g.Pype and g.tec's gtec-unicorn driver among it, is
 # installed from PyPI on first launch (see bootstrap.py): g.tec's licences
 # forbid redistributing g.Pype and the driver in a bundle.
 
-VERSION="$("$DEV_PY" -c 'import braindump; print(braindump.__version__)')"
+VERSION="$("$DEV_PY" -c 'import brainstream; print(brainstream.__version__)')"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 git -C "$ROOT" diff --quiet HEAD -- src pyproject.toml packaging || COMMIT="$COMMIT-dirty"
 
@@ -35,7 +35,7 @@ build_wheels() {
     done <<< "$GIT_DEPS"
 }
 
-# requirements.txt for a platform: brAIn dump's and its lab libraries'
+# requirements.txt for a platform: brAIn stream's and its lab libraries'
 # dependencies from PyPI, at the versions the tests ran with.
 pin_requirements() {
     local platform="$1"
@@ -71,5 +71,5 @@ from PySide6.QtGui import QGuiApplication, QIcon
 app = QGuiApplication([])
 fmt = sys.argv[4] if len(sys.argv) > 4 else None
 QIcon(sys.argv[1]).pixmap(int(sys.argv[3]), int(sys.argv[3])).save(sys.argv[2], fmt)
-' "$ROOT/src/braindump/resources/braindump.svg" "$1" "$2" ${3:-}
+' "$ROOT/src/brainstream/resources/brainstream.svg" "$1" "$2" ${3:-}
 }

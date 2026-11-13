@@ -70,13 +70,13 @@ jobs:
         run: |
           export HOME="$RUNNER_TEMP/home"
           mkdir -p "$HOME" "$RUNNER_TEMP/pkg"
-          tar -xzf dist/brAIndump-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP/pkg"
-          "$RUNNER_TEMP"/pkg/brAIndump-*/install.sh
-          APP="$HOME/.local/share/braindump/app"
-          "$HOME/.local/bin/braindump" --version
+          tar -xzf dist/brAInstream-*-linux-x86_64.tar.gz -C "$RUNNER_TEMP/pkg"
+          "$RUNNER_TEMP"/pkg/brAInstream-*/install.sh
+          APP="$HOME/.local/share/brainstream/app"
+          "$HOME/.local/bin/brainstream" --version
           "$APP/python/bin/python3" -I packaging/smoke_test.py \
-            "$HOME/.local/share/braindump/runtime/$(cat "$APP/build-id")" \
-            "$(.venv/bin/python -c 'import braindump; print(braindump.__version__)')"
+            "$HOME/.local/share/brainstream/runtime/$(cat "$APP/build-id")" \
+            "$(.venv/bin/python -c 'import brainstream; print(brainstream.__version__)')"
       - uses: actions/upload-artifact@v4
         with:
           name: linux
@@ -127,16 +127,16 @@ jobs:
           $pkg = (Get-ChildItem $env:RUNNER_TEMP\pkg -Directory)[0].FullName
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$pkg\install.ps1"
           if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
-          $app = "$env:LOCALAPPDATA\brAIn dump\app"
-          if (-not (Test-Path "$([Environment]::GetFolderPath('Programs'))\brAIn dump.lnk")) { throw 'no Start menu shortcut' }
+          $app = "$env:LOCALAPPDATA\brAIn stream\app"
+          if (-not (Test-Path "$([Environment]::GetFolderPath('Programs'))\brAIn stream.lnk")) { throw 'no Start menu shortcut' }
           $build = (Get-Content "$app\build-id" -Raw).Trim()
           $version = $build.Split('-')[0]
           & "$app\python\python.exe" -I "$app\launcher.py" --version
           if ($LASTEXITCODE -ne 0) { throw 'launcher failed' }
-          & "$app\python\python.exe" -I packaging\smoke_test.py "$env:LOCALAPPDATA\brAIn dump\runtime\$build" $version
+          & "$app\python\python.exe" -I packaging\smoke_test.py "$env:LOCALAPPDATA\brAIn stream\runtime\$build" $version
           if ($LASTEXITCODE -ne 0) { throw 'smoke test failed' }
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$pkg\uninstall.ps1"
-          if (Test-Path "$env:LOCALAPPDATA\brAIn dump") { throw 'uninstall left files' }
+          if (Test-Path "$env:LOCALAPPDATA\brAIn stream") { throw 'uninstall left files' }
 
   macos:
     name: Build and check the macOS app
@@ -157,12 +157,12 @@ jobs:
         run: packaging/macos/build_app.sh
       - name: Check the app
         run: |
-          APP="dist/brAIn dump.app"
+          APP="dist/brAIn stream.app"
           RES="$APP/Contents/Resources"
-          "$APP/Contents/MacOS/braindump" --version
+          "$APP/Contents/MacOS/brainstream" --version
           "$RES/python/bin/python3" -I -B packaging/smoke_test.py \
-            "$HOME/Library/Application Support/brAIn dump/runtime/$(cat "$RES/build-id")" \
-            "$(.venv/bin/python -c 'import braindump; print(braindump.__version__)')"
+            "$HOME/Library/Application Support/brAIn stream/runtime/$(cat "$RES/build-id")" \
+            "$(.venv/bin/python -c 'import brainstream; print(brainstream.__version__)')"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -190,14 +190,14 @@ jobs:
         run: |
           NOTES="docs/releases/$TAG.md"
           cd dist
-          sha256sum brAIndump-* > SHA256SUMS
+          sha256sum brAInstream-* > SHA256SUMS
           cat SHA256SUMS
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" --clobber brAIndump-* SHA256SUMS
+            gh release upload "$TAG" --clobber brAInstream-* SHA256SUMS
           elif [ -f "../$NOTES" ]; then
-            gh release create "$TAG" --verify-tag --title "brAIn dump ${TAG#v}" \
-              --notes-file "../$NOTES" brAIndump-* SHA256SUMS
+            gh release create "$TAG" --verify-tag --title "brAIn stream ${TAG#v}" \
+              --notes-file "../$NOTES" brAInstream-* SHA256SUMS
           else
-            gh release create "$TAG" --verify-tag --title "brAIn dump ${TAG#v}" \
-              --generate-notes brAIndump-* SHA256SUMS
+            gh release create "$TAG" --verify-tag --title "brAIn stream ${TAG#v}" \
+              --generate-notes brAInstream-* SHA256SUMS
           fi

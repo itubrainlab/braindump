@@ -4,10 +4,10 @@ import time
 
 from PySide6.QtWidgets import QApplication
 
-from braindump.project import Project
-from braindump.ui import theme
-from braindump.ui.forms import ConfigForm
-from braindump.ui.main_window import MainWindow
+from brainstream.project import Project
+from brainstream.ui import theme
+from brainstream.ui.forms import ConfigForm
+from brainstream.ui.main_window import MainWindow
 
 
 def test_main_window_simulated(tmp_path):

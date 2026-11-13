@@ -8,9 +8,9 @@ from opengp3 import webcam as gp3_webcam
 from opengp3.simulate import SimulatedCamera
 from opengp3.webcam import WEBCAM_WARNING
 
-from braindump.devices.gp3 import GP3Config, GP3Device
-from braindump.devices.gp3_backends import (LocalBackend,
-                                           calibration_is_webcam)
+from brainstream.devices.gp3 import GP3Config, GP3Device
+from brainstream.devices.gp3_backends import (LocalBackend,
+                                              calibration_is_webcam)
 
 
 class FakeWebcam(SimulatedCamera):

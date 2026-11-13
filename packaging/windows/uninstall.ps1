@@ -1,10 +1,10 @@
-# Remove brAIn dump for the current user. Projects, recordings and the list
-# of recent projects (%APPDATA%\brAIn dump) are kept. Started by
+# Remove brAIn stream for the current user. Projects, recordings and the list
+# of recent projects (%APPDATA%\brAIn stream) are kept. Started by
 # uninstall.cmd.
 $ErrorActionPreference = 'Stop'
 
-$data = Join-Path $env:LOCALAPPDATA 'brAIn dump'
-$link = Join-Path ([Environment]::GetFolderPath('Programs')) 'brAIn dump.lnk'
+$data = Join-Path $env:LOCALAPPDATA 'brAIn stream'
+$link = Join-Path ([Environment]::GetFolderPath('Programs')) 'brAIn stream.lnk'
 if (Test-Path $link) { Remove-Item -Force $link }
 
 if (Test-Path $data) {
@@ -17,4 +17,4 @@ if (Test-Path $data) {
         Remove-Item -Recurse -Force $data
     }
 }
-Write-Host 'brAIn dump is removed. Projects and recordings are kept.'
+Write-Host 'brAIn stream is removed. Projects and recordings are kept.'

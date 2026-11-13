@@ -9,13 +9,13 @@ import numpy as np
 import pyedflib
 from scipy import signal
 
-from braindump import presets
-from braindump.bids import read_tsv
-from braindump.devices import make_device
-from braindump.devices.unicorn import (HIGHPASS, LOWPASS, NYQUIST,
-                                       RecordingFilter, UnicornConfig)
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream import presets
+from brainstream.bids import read_tsv
+from brainstream.devices import make_device
+from brainstream.devices.unicorn import (HIGHPASS, LOWPASS, NYQUIST,
+                                         RecordingFilter, UnicornConfig)
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 def test_defaults_and_choices():

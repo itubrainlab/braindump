@@ -1,6 +1,6 @@
-# Validating a brAIn dump setup
+# Validating a brAIn stream setup
 
-This procedure checks that brAIn dump records the lab's signals **correctly**
+This procedure checks that brAIn stream records the lab's signals **correctly**
 and **in step with each other**:
 
 - **EEG**: g.tec g.HIamp or Unicorn;
@@ -60,8 +60,8 @@ a misalignment of more than a few tens of ms moves it out of its window.
 
 | File | |
 |---|---|
-| [`face_validation.py`](face_validation.py) | The procedure, in PsychoPy. Every step is an LSL marker (stream `brAIndumpValidation`) stamped at the screen flip that shows it. |
-| [`make_project.py`](make_project.py) | Makes the brAIn dump project the procedure records with (`--lab` for the lab's booth). |
+| [`face_validation.py`](face_validation.py) | The procedure, in PsychoPy. Every step is an LSL marker (stream `brAInstreamValidation`) stamped at the screen flip that shows it. |
+| [`make_project.py`](make_project.py) | Makes the brAIn stream project the procedure records with (`--lab` for the lab's booth). |
 | [`analyse.py`](analyse.py) | Checks a recording; writes `report.md` with figures. |
 | [`screen_delay.py`](screen_delay.py) | Measures how late OBS's NDI frames are: the value for the Screen Capture's Delay. |
 
@@ -101,7 +101,7 @@ the same frame as the GP3's gaze.
 
 ## Setting up (once)
 
-**The computer.** Install brAIn dump from source, with the analysis's
+**The computer.** Install brAIn stream from source, with the analysis's
 figures:
 
 ```bash
@@ -112,7 +112,7 @@ Then install [PsychoPy](https://www.psychopy.org/download.html). The
 standalone app includes pylsl.
 
 **The eye tracker.** The GP3 runs under OpenGP3's server, so that PsychoPy
-can draw its calibration and brAIn dump can record it at the same time. On
+can draw its calibration and brAIn stream can record it at the same time. On
 the computer the GP3 is connected to, run:
 
 ```bash
@@ -129,14 +129,14 @@ capture the participant's screen (Display Capture), and turn on
 Set **Settings → Video** so the canvas has the screen's shape (e.g.
 2560×1440), and fit the capture to it (Edit → Transform → Fit to screen):
 otherwise OBS sends only part of the screen. Then measure OBS's delay, and
-set it as the Screen Capture's **Delay** in brAIn dump:
+set it as the Screen Capture's **Delay** in brAIn stream:
 
 ```bash
 python validation/screen_delay.py
 ```
 
 PsychoPy flashes the screen for half a minute while this times the flashes
-in OBS's NDI stream, as brAIn dump receives it. Measure again whenever OBS's
+in OBS's NDI stream, as brAIn stream receives it. Measure again whenever OBS's
 video settings change.
 
 **The face images.** You need a folder of at least 30 face photographs. The
@@ -147,7 +147,7 @@ licence before sharing them; this repository does not include any.
 **The project.** Make it once:
 
 ```bash
-python validation/make_project.py "~/brAIn dump/validation" \
+python validation/make_project.py "~/brAIn stream/validation" \
     --unicorn UN-2024.10.18 --gp3-host 127.0.0.1 --screen-width-cm 53
 ```
 
@@ -156,15 +156,15 @@ script sets up four devices:
 
 - the Unicorn;
 - the GP3, read over the Open Gaze API;
-- the **LSL streams** device, listening for `brAIndumpValidation`;
+- the **LSL streams** device, listening for `brAInstreamValidation`;
 - **Screen Capture** (OBS over NDI), recording as `recording-screen`.
 
 ## A session
 
-1. **Start everything.** Start `opengp3 server` and OBS, then brAIn dump; open
+1. **Start everything.** Start `opengp3 server` and OBS, then brAIn stream; open
    the validation project. Seat the participant about 65 cm from the screen.
 2. **Fit the Unicorn.** The data viewer's quality dots should be green.
-3. **Connect all** (the plug button) in brAIn dump. On the GP3 page, check
+3. **Connect all** (the plug button) in brAIn stream. On the GP3 page, check
    the eye view (both eyes, the distance bar in the green).
 4. **Start the procedure**, with PsychoPy's Python (or open it in PsychoPy's
    Coder and Run):
@@ -173,10 +173,10 @@ script sets up four devices:
    python face_validation.py --faces <faces folder> --participant 01 --screen 0
    ```
 
-   It waits until brAIn dump receives its marker stream.
-5. **Press Record** in brAIn dump: participant `01`, task `facevalidation`.
+   It waits until brAIn stream receives its marker stream.
+5. **Press Record** in brAIn stream: participant `01`, task `facevalidation`.
    Then press space in PsychoPy.
-6. **Stop.** After the debriefing, stop recording in brAIn dump.
+6. **Stop.** After the debriefing, stop recording in brAIn stream.
 
 PsychoPy also writes its own log of the markers, with their LSL times, in
 `validation/data/`.
@@ -184,7 +184,7 @@ PsychoPy also writes its own log of the markers, with their LSL times, in
 ## Checking the recording
 
 ```bash
-python validation/analyse.py "~/brAIn dump/validation/bids" --sub 01
+python validation/analyse.py "~/brAIn stream/validation/bids" --sub 01
 ```
 
 This prints each check and writes `report.md`, with the alpha spectra, the
@@ -213,13 +213,13 @@ and not significant against the mastoids.
 | N170 | The EEG signal quality section; too few clean epochs (> ±100 µV are left out). A latency outside 130–200 ms points to a timing offset (see Synchronisation). |
 | Markers in eeg/ and beh/ | A recording error: report it. |
 | Saccades to the crosses | Negative or > 500 ms: the gaze and the markers are out of step. Check the GP3's clock mapping (remote: the network); the latency settings. |
-| Faces in the screen recording | Not found: is OBS capturing the stimulus screen? (See Screen recording setup.) Late but steady (small IQR): that is OBS's capture and output delay. Set the Screen Capture's **Delay** in brAIn dump to the median the report gives, and record again. Spread out: NDI over a busy network, or OBS dropping frames. |
+| Faces in the screen recording | Not found: is OBS capturing the stimulus screen? (See Screen recording setup.) Late but steady (small IQR): that is OBS's capture and output delay. Set the Screen Capture's **Delay** in brAIn stream to the median the report gives, and record again. Spread out: NDI over a busy network, or OBS dropping frames. |
 
 ## Without hardware
 
 `--dry-run` gives a short version (4 s rests, 6 faces) in a window. `--auto`
 goes on by itself without key presses. Use them to test the chain with
-brAIn dump's simulated devices. The project script's `--simulate` makes every
+brAIn stream's simulated devices. The project script's `--simulate` makes every
 device simulated. The analysis then finds every file and checks the markers
 and coverage, while the physiological checks fail: a simulator has no eyes
 to close or faces to see.

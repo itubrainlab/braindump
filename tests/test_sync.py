@@ -3,7 +3,7 @@ own time measured, so events and recordings line up.
 
 The end-to-end test sends a UDP trigger and an LSL marker at the same
 instant: g.Pype places the trigger on the EEG sample acquired then, by
-the headset's acquisition stamps; brAIn dump places the marker by its own
+the headset's acquisition stamps; brAIn stream places the marker by its own
 clock and the EEG timeline it fitted. They must land on the same sample.
 """
 import json
@@ -15,14 +15,14 @@ import pylsl
 import pyedflib
 
 from conftest import connect_all
-from braindump import clock
-from braindump.bids import read_tsv
-from braindump.devices import make_device
-from braindump.devices.base import Timeline, start_time
-from braindump.pipeline import ClockMap
-from braindump.devices.unicorn import fit_timing
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream import clock
+from brainstream.bids import read_tsv
+from brainstream.devices import make_device
+from brainstream.devices.base import Timeline, start_time
+from brainstream.pipeline import ClockMap
+from brainstream.devices.unicorn import fit_timing
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 def test_clock_is_steady_and_readable():
@@ -99,10 +99,10 @@ def _free_udp_port() -> int:
 def test_trigger_and_marker_land_on_the_same_eeg_sample(tmp_path):
     port = _free_udp_port()
     outlet = pylsl.StreamOutlet(pylsl.StreamInfo(
-        "BrainDumpSyncTest", "Markers", 1, 0, "string", "bd-sync-test"))
+        "BrainStreamSyncTest", "Markers", 1, 0, "string", "bd-sync-test"))
     project = Project.create(tmp_path / "p", "P")
     project.add_device("unicorn", {"simulate": True, "trigger_port": port})
-    project.add_device("lsl", {"streams": [{"name": "BrainDumpSyncTest"}]})
+    project.add_device("lsl", {"streams": [{"name": "BrainStreamSyncTest"}]})
     project.add_device("gp3", {"simulate": True})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
@@ -132,7 +132,7 @@ def test_trigger_and_marker_land_on_the_same_eeg_sample(tmp_path):
     eeg = project.output_path / "sub-01" / "eeg"
     _, rows = read_tsv(eeg / "sub-01_task-sync_events.tsv")
     triggers = [r for r in rows if r["trial_type"] == "trigger"]
-    markers = [r for r in rows if r["source"] == "lsl:BrainDumpSyncTest"]
+    markers = [r for r in rows if r["source"] == "lsl:BrainStreamSyncTest"]
     assert [r["value"] for r in triggers] == [str(v) for v in range(1, 7)]
     assert [r["value"] for r in markers] == [f"m{v}" for v in range(1, 7)]
     gaps = [int(m["sample"]) - int(t["sample"])

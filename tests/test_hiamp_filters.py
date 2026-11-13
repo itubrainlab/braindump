@@ -9,13 +9,13 @@ import pyedflib
 import pytest
 from scipy import signal
 
-from braindump.bids import read_tsv
-from braindump.devices import make_device
-from braindump.devices.hiamp import (NO_FILTER, HIampConfig,
-                                     default_bandpass)
-from braindump.pipeline import DeviceError
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.bids import read_tsv
+from brainstream.devices import make_device
+from brainstream.devices.hiamp import (NO_FILTER, HIampConfig,
+                                       default_bandpass)
+from brainstream.pipeline import DeviceError
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 RATE = 512
 

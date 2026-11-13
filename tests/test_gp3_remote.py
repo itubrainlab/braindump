@@ -5,9 +5,10 @@ import time
 
 from opengp3.server import element, parse_command
 
-from braindump.devices.gp3 import GP3Config
-from braindump.devices.gp3_backends import (INDEX, RemoteBackend,
-                                           model_from_product, nominal_rate)
+from brainstream.devices.gp3 import GP3Config
+from brainstream.devices.gp3_backends import (INDEX, RemoteBackend,
+                                              model_from_product,
+                                              nominal_rate)
 
 
 class FakeServer:

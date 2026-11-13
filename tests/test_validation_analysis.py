@@ -1,4 +1,4 @@
-"""validation/analyse.py on synthetic recordings, in brAIn dump's layout,
+"""validation/analyse.py on synthetic recordings, in brAIn stream's layout,
 whose properties are known: it passes a good one, and catches each fault.
 """
 import gzip
@@ -182,8 +182,8 @@ def make_dataset(root: Path, *, alpha=True, n170=True, gaze_offset=0.0,
         "name\ttype\tunits\n" + "".join(
             f"{c}\t{'EOG' if c == 'HEOG' else 'EEG'}\tuV\n" for c in labels))
     events = "onset\tduration\ttrial_type\tvalue\tsource\n" + "".join(
-        f"{time + marker_shift:.6f}\t0\tbrAIndumpValidation\t{text}\t"
-        f"lsl:brAIndumpValidation\n" for time, text in markers)
+        f"{time + marker_shift:.6f}\t0\tbrAInstreamValidation\t{text}\t"
+        f"lsl:brAInstreamValidation\n" for time, text in markers)
     (eeg_dir / f"{STEM}_events.tsv").write_text(events)
     (beh_dir / f"{STEM}_events.tsv").write_text(events)
 
@@ -353,14 +353,14 @@ def test_make_project(tmp_path):
         [sys.executable, str(ROOT / "validation" / "make_project.py"),
          str(tmp_path / "v"), "--unicorn", "UN-1", "--gp3-host", "10.0.0.5"],
         capture_output=True, text=True, check=True)
-    project = json.loads(next((tmp_path / "v").glob("*.braindump"))
+    project = json.loads(next((tmp_path / "v").glob("*.brainstream"))
                          .read_text())
     assert project["task"] == "facevalidation"
     assert list(project["devices"]) == ["unicorn", "gp3", "lsl", "obs"]
     assert project["devices"]["gp3"]["mode"] == "remote"
     assert project["devices"]["gp3"]["host"] == "10.0.0.5"
     assert project["devices"]["lsl"]["streams"][0]["name"] == \
-        "brAIndumpValidation"
+        "brAInstreamValidation"
     assert project["devices"]["obs"]["label"] == "screen"
     assert "Project:" in out.stdout
 
@@ -439,8 +439,8 @@ def test_make_lab_project(tmp_path):
          "--electrodes", str(names), "--simulate"],
         capture_output=True, text=True, check=True,
         env={**__import__("os").environ,
-             "BRAINDUMP_HOME": str(tmp_path / "home")})
-    project = json.loads(next((tmp_path / "v").glob("*.braindump"))
+             "BRAINSTREAM_HOME": str(tmp_path / "home")})
+    project = json.loads(next((tmp_path / "v").glob("*.brainstream"))
                          .read_text())
     devices = project["devices"]
     assert list(devices) == ["hiamp", "gp3", "lsl", "obs", "webcam"]
@@ -486,3 +486,14 @@ def test_camera_seeing_nothing_fails(tmp_path):
     sync = checks["Synchronisation"]
     assert sync.passed is False
     assert "timing could not be measured" in "\n".join(sync.lines)
+
+
+def test_recordings_from_before_the_rename_are_read(tmp_path):
+    """Validation recordings made as brAIn dump: the procedure's markers
+    came from the stream brAIndumpValidation."""
+    root = make_dataset(tmp_path / "bids")
+    for path in root.rglob("*_events.tsv"):
+        path.write_text(path.read_text().replace(
+            "brAInstreamValidation", "brAIndumpValidation"))
+    rec = analyse.load(root, "01")
+    assert rec.markers and rec.first("rest_open_start") is not None

@@ -5,11 +5,11 @@ import pytest
 import pylsl
 
 from conftest import connect_all
-from braindump.bids import read_tsv
-from braindump.devices import make_device
-from braindump.devices.lsl import matches
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.bids import read_tsv
+from brainstream.devices import make_device
+from brainstream.devices.lsl import matches
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 def test_selector_matching():
@@ -22,10 +22,10 @@ def test_selector_matching():
 @pytest.mark.slow
 def test_markers_become_events(tmp_path):
     outlet = pylsl.StreamOutlet(pylsl.StreamInfo(
-        "BrainDumpTestStim", "Markers", 1, 0, "string", "bd-test-stim"))
+        "BrainStreamTestStim", "Markers", 1, 0, "string", "bd-test-stim"))
     project = Project.create(tmp_path / "p", "P")
     project.add_device("unicorn", {"simulate": True})
-    project.add_device("lsl", {"streams": [{"name": "BrainDumpTestStim"}]})
+    project.add_device("lsl", {"streams": [{"name": "BrainStreamTestStim"}]})
     devices = [make_device(t, c, project.folder)
                for t, c in project.devices.items()]
     pipeline = connect_all(devices)
@@ -56,8 +56,8 @@ def test_markers_become_events(tmp_path):
     assert columns == ["onset", "duration", "trial_type", "value", "source",
                        "sample"]
     assert [r["value"] for r in rows] == ["stimulus 1", "response"]
-    assert rows[0]["trial_type"] == "BrainDumpTestStim"
-    assert rows[0]["source"] == "lsl:BrainDumpTestStim"
+    assert rows[0]["trial_type"] == "BrainStreamTestStim"
+    assert rows[0]["source"] == "lsl:BrainStreamTestStim"
     # Onsets are from the EEG's first sample, which came ~0.1 s after
     # Record; the marker was sent 0.5 s after that.
     onset = float(rows[0]["onset"])
@@ -75,11 +75,11 @@ def test_a_procedure_run_again_is_recorded_once(tmp_path):
     now keeps to its own outlet, so each marker arrives once."""
     def outlet():
         return pylsl.StreamOutlet(pylsl.StreamInfo(
-            "BrainDumpTestRerun", "Markers", 1, 0, "string",
+            "BrainStreamTestRerun", "Markers", 1, 0, "string",
             "bd-test-rerun"))
 
     project = Project.create(tmp_path / "p", "P")
-    project.add_device("lsl", {"streams": [{"name": "BrainDumpTestRerun"}]})
+    project.add_device("lsl", {"streams": [{"name": "BrainStreamTestRerun"}]})
     lsl = make_device("lsl", project.devices["lsl"], project.folder)
     pipeline = connect_all([lsl])
     try:
@@ -98,7 +98,7 @@ def test_a_procedure_run_again_is_recorded_once(tmp_path):
             time.sleep(0.25)
         time.sleep(1.0)
         values = [e.value for e in lsl.log
-                  if e.source == "lsl:BrainDumpTestRerun"]
+                  if e.source == "lsl:BrainStreamTestRerun"]
         assert values.count("marker 0") == 1
         assert sorted(set(values)) == sorted(values), values
         assert len([v for v in values if v.startswith("marker")]) == 16

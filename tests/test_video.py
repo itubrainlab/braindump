@@ -10,11 +10,11 @@ import numpy as np
 import pytest
 
 from conftest import connect_all
-from braindump.bids import read_tsv
-from braindump.devices import make_device
-from braindump.pipeline import DeviceError
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.bids import read_tsv
+from brainstream.devices import make_device
+from brainstream.pipeline import DeviceError
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 def _record(project, devices, seconds=2.5, task="watch", warmup=1.0):
@@ -74,7 +74,7 @@ def test_obs_over_ndi(tmp_path):
     if not ndi.initialize():
         pytest.skip("NDI does not start here")
     create = ndi.SendCreate()
-    create.ndi_name = "OBS brAIn dump test"
+    create.ndi_name = "OBS brAIn stream test"
     sender = ndi.send_create(create)
     image = np.zeros((180, 320, 4), np.uint8)
     frame = ndi.VideoFrameV2()
@@ -92,7 +92,7 @@ def test_obs_over_ndi(tmp_path):
             time.sleep(1 / 25)
     threading.Thread(target=pump, daemon=True).start()
     project = Project.create(tmp_path / "p", "P")
-    project.add_device("obs", {"source": "OBS brAIn dump test"})
+    project.add_device("obs", {"source": "OBS brAIn stream test"})
     obs = make_device("obs", project.devices["obs"], project.folder)
     try:
         try:

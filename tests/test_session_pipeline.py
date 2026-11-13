@@ -4,11 +4,11 @@ import time
 
 import pytest
 
-from braindump.devices import make_device
-from braindump.devices.base import IDLE, RUNNING
-from braindump.pipeline import DeviceError, SessionPipeline
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.devices import make_device
+from brainstream.devices.base import IDLE, RUNNING
+from brainstream.pipeline import DeviceError, SessionPipeline
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 def _devices(tmp_path, kinds):

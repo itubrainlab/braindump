@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "braindump"
+name = "brainstream"
 dynamic = ["version"]
-description = "brAIn dump: multi-device recording for the brAIn lab (g.tec Unicorn EEG, Gazepoint GP3 eye tracking) into BIDS"
+description = "brAIn stream: multi-device recording for the brAIn lab (g.tec Unicorn EEG, Gazepoint GP3 eye tracking) into BIDS"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -51,16 +51,16 @@ shimmer = ["pyshimmer>=1.0"]
 validation = ["matplotlib>=3.7"]
 
 [project.gui-scripts]
-braindump = "braindump.app:main"
+brainstream = "brainstream.app:main"
 
 [tool.setuptools.dynamic]
-version = { attr = "braindump.__version__" }
+version = { attr = "brainstream.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-braindump = ["resources/*.svg"]
+brainstream = ["resources/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,8 +1,8 @@
-"""Make the brAIn dump project the validation procedure records with.
+"""Make the brAIn stream project the validation procedure records with.
 
 The lab (two computers, see validation/LAB.md), on the recording computer:
 
-    python validation/make_project.py "~/brAIn dump/lab-validation" --lab \\
+    python validation/make_project.py "~/brAIn stream/lab-validation" --lab \\
         --stimulus-host 192.168.1.20 --electrodes validation/cap64.txt
 
 The same as::
@@ -12,7 +12,7 @@ The same as::
 
 A single computer with a Unicorn (the first sessions)::
 
-    python validation/make_project.py "~/brAIn dump/validation" \\
+    python validation/make_project.py "~/brAIn stream/validation" \\
         --unicorn UN-2024.10.18 --gp3-host 127.0.0.1
 
 Devices: the EEG (g.HIamp or Unicorn), the GP3 (or GP3 HD) read over the
@@ -31,20 +31,20 @@ import argparse
 import sys
 from pathlib import Path
 
-from braindump.devices.gp3 import GP3Config
-from braindump.devices.lsl import LslConfig
-from braindump.devices.unicorn import UnicornConfig
-from braindump.devices.video import ObsConfig, WebcamConfig
-from braindump.project import Project, remember
+from brainstream.devices.gp3 import GP3Config
+from brainstream.devices.lsl import LslConfig
+from brainstream.devices.unicorn import UnicornConfig
+from brainstream.devices.video import ObsConfig, WebcamConfig
+from brainstream.project import Project, remember
 
 TASK = "facevalidation"
-MARKERS = "brAIndumpValidation"
+MARKERS = "brAInstreamValidation"
 
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("folder", help="where the project goes")
-    p.add_argument("--name", default="brAIn dump validation")
+    p.add_argument("--name", default="brAIn stream validation")
     p.add_argument("--lab", action="store_true",
                    help="the lab's two-computer setup: g.HIamp (64 channels, "
                         "64 bipolar EOG, 0.01-100 Hz, 50 Hz notch), the GP3 "
@@ -99,7 +99,7 @@ def parse_args(argv=None):
         args.notch = args.notch or 50.0
         args.webcam = args.webcam or "first"
         args.name = args.name if args.name != p.get_default("name") \
-            else "brAIn dump lab validation"
+            else "brAIn stream lab validation"
     if args.stimulus_host:
         args.gp3_host = args.stimulus_host
     args.eeg = args.eeg or "unicorn"
@@ -120,8 +120,9 @@ def hiamp_config(args) -> dict:
     """The g.HIamp's configuration, with its amplifier filters chosen by
     their cut-offs among those it offers (it is opened briefly to list
     them)."""
-    from braindump.devices import make_device
-    from braindump.devices.hiamp import HIampConfig, describe_amplifier_filter
+    from brainstream.devices import make_device
+    from brainstream.devices.hiamp import (HIampConfig,
+                                           describe_amplifier_filter)
     names = electrode_names(args.electrodes)
     typed = {int(e.split("=")[0]) for e in args.channel_type}
     eeg_names = [n for i, n in enumerate(names, 1) if i not in typed]
@@ -141,8 +142,8 @@ def hiamp_config(args) -> dict:
     except Exception as error:  # noqa: BLE001
         sys.exit(f"Could not list the g.HIamp's filters ({error}). Connect "
                  f"the amplifier and run this again, or leave out "
-                 f"--bandpass/--notch and choose them in brAIn dump (g.HIamp, "
-                 f"Settings, Load from amplifier).")
+                 f"--bandpass/--notch and choose them in brAIn stream "
+                 f"(g.HIamp, Settings, Load from amplifier).")
     cfg = device.config
     if args.bandpass:
         low, high = (float(v) for v in args.bandpass.split("-"))
@@ -172,7 +173,7 @@ def hiamp_config(args) -> dict:
 def webcam_config(args) -> dict:
     cfg = WebcamConfig(label="camera", simulate=args.simulate)
     if args.webcam not in ("", "first") and not args.simulate:
-        from braindump.devices.video import find_cameras
+        from brainstream.devices.video import find_cameras
         cameras = find_cameras()
         match = [c for c in cameras if args.webcam.lower() in c.name.lower()]
         if not match:
@@ -186,7 +187,7 @@ def webcam_config(args) -> dict:
 def main(argv=None) -> int:
     args = parse_args(argv)
     project = Project.create(Path(args.folder), args.name, task=TASK,
-                             description="Validation of brAIn dump's "
+                             description="Validation of brAIn stream's "
                                          "recordings: EEG alpha and signal "
                                          "quality, gaze accuracy, N170 to "
                                          "faces and the synchronisation of "
