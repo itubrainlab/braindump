@@ -35,4 +35,4 @@ jobs:
           uv venv --python 3.12 .venv
           uv pip install --python .venv -e ".[test,shimmer,validation]"
       - name: Tests
-        run: .venv/bin/python -m pytest -q -rs -m "not slow"
+        run: .venv/bin/python -m pytest -q -rs -n 4 -m "not slow"

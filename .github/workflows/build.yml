@@ -1,7 +1,8 @@
 # The release build, run only for a pushed v* tag (or by hand): every test
-# on Linux, Windows and macOS, then the three packages, each installed on
-# its own platform and checked with every device simulated. A tag then
-# publishes them as that release, with docs/releases/<tag>.md as its notes.
+# on Linux, Windows and macOS, and, at the same time, the three packages,
+# each installed on its own platform and checked with every device
+# simulated. When all of them pass, a tag publishes the packages as that
+# release, with docs/releases/<tag>.md as its notes.
 # Pushes and pull requests get the quick check instead (check.yml).
 name: Release
 
@@ -30,6 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
       - name: Qt's libraries
         if: runner.os == 'Linux'
         run: bash .github/qt-libs.sh
@@ -41,16 +45,19 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Windows ]; then BIN=.venv/Scripts; else BIN=.venv/bin; fi
           export BIDS_VALIDATOR="$(ls "$BIN"/bids-validator-deno* | head -1)"
-          "$BIN/python" -m pytest -q -rs
+          # In 4 workers: the slow tests mostly wait on real-time recordings.
+          "$BIN/python" -m pytest -q -rs -n 4
 
-  linux-and-windows:
-    name: Build Linux and Windows packages
-    needs: tests
+  linux:
+    name: Build and check the Linux package
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
       - name: Qt's libraries
         run: bash .github/qt-libs.sh
       - name: Set up .venv
@@ -58,9 +65,7 @@ jobs:
           uv venv --python 3.12 .venv
           uv pip install --python .venv -e ".[test,shimmer,validation]"
       - name: Build
-        run: |
-          packaging/linux/build_linux.sh
-          packaging/windows/build_windows.sh
+        run: packaging/linux/build_linux.sh
       - name: Install and check the Linux package
         run: |
           export HOME="$RUNNER_TEMP/home"
@@ -77,6 +82,26 @@ jobs:
           name: linux
           path: dist/*.tar.gz
           if-no-files-found: error
+
+  windows:
+    # Built on Linux: it only downloads and arranges files.
+    name: Build the Windows package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - name: Qt's libraries
+        run: bash .github/qt-libs.sh
+      - name: Set up .venv
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv -e ".[test,shimmer,validation]"
+      - name: Build
+        run: packaging/windows/build_windows.sh
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -85,7 +110,7 @@ jobs:
 
   windows-check:
     name: Install and check the Windows package
-    needs: linux-and-windows
+    needs: windows
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -115,12 +140,14 @@ jobs:
 
   macos:
     name: Build and check the macOS app
-    needs: tests
     runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
       - name: Set up .venv
         run: |
           uv python install 3.12
@@ -145,7 +172,8 @@ jobs:
   release:
     name: Publish the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-and-windows, windows-check, macos]
+    # Every test and every package check must pass.
+    needs: [tests, linux, windows-check, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
