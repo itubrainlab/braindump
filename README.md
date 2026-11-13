@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/brainstream/resources/brainstream.svg" alt="brAIn stream logo: the brAIn lab brain, streaming binary" width="160">
+</p>
+
 # brAIn stream
 
 Multi-device recording for the ITU brAIn lab, into a **BIDS** dataset, on
