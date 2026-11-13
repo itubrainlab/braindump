@@ -3,21 +3,30 @@
 This procedure checks that brAIn dump records the lab's signals **correctly**
 and **in step with each other**:
 
-- **EEG**: g.tec Unicorn;
-- **gaze**: Gazepoint GP3;
+- **EEG**: g.tec g.HIamp or Unicorn;
+- **gaze**: Gazepoint GP3 or GP3 HD;
 - **the screen**: OBS over NDI;
+- **a camera**;
 - **the experiment's events**: PsychoPy's LSL markers.
 
-A participant (anyone; 10 minutes) rests with eyes open and closed, follows
-the eye tracker's calibration, and looks at 30 faces. The analysis then
-checks four things in the recording:
+**For the lab's booth** (two computers, a 64-channel g.HIamp with a bipolar
+EOG, the GP3 HD and OBS on the stimulus computer, a camera on the recording
+computer), follow [LAB.md](LAB.md): how to set it up, run a session and
+read the report. This page describes the procedure and the analysis, and the
+first sessions on a single computer with a Unicorn.
+
+A participant (anyone; 15 minutes) watches the screen flash, rests with
+eyes open and closed, follows the eye tracker's calibration and moving
+targets, and looks at 30 faces. The analysis then checks five things in
+the recording:
 
 | # | Check | Passes when |
 |---|---|---|
 | 1 | **Alpha**: eyes closed vs open | posterior alpha (8–13 Hz) power is ≥ 1.5 × higher with the eyes closed |
-| 2 | **Gaze accuracy** at the fixation crosses | median error ≤ 1.5°, and ≥ 80 % of crosses within 1.5° |
-| 3 | **N170** after the faces | a negative peak at PO7/PO8 (average reference) between 130 and 200 ms, below zero across trials (p < 0.05) |
-| 4 | **Synchronisation** of EEG, markers, eyes and screen | see below |
+| 2 | **EEG signal quality** | ≥ 90 % of the EEG channels, and every site checks 1 and 4 use, have under 50 µV of 1–30 Hz noise |
+| 3 | **Gaze accuracy** at the fixation crosses | median error ≤ 1.5°, and ≥ 80 % of crosses within 1.5° |
+| 4 | **N170** after the faces | a negative peak at PO7/PO8 (average reference) between 130 and 200 ms, below zero across trials (p < 0.05) |
+| 5 | **Synchronisation** of EEG, markers, eyes, screen and camera | see below |
 
 Synchronisation is checked several independent ways, each against the
 markers:
@@ -25,15 +34,24 @@ markers:
 - **Markers:** they are identical in `eeg/` and `beh/` (to 1 ms).
 - **Eyes:** they reach each new cross 80–500 ms after its marker. A saccade
   can't come before its target, and doesn't take half a second.
+- **Eyes:** they follow the moving targets −50 to 150 ms behind them,
+  measured over the whole path.
+- **EEG and eyes, directly:** a channel recorded as EOG moves with the gaze
+  within 40 ms. No marker is involved.
 - **Eyes:** gaze is lost within 3 s of "eyes closed". When it comes back
   after the tone, and when the EEG's alpha rises, are reported as
   information: both depend on the participant.
-- **Screen:** each face appears in the screen recording −20 to 200 ms after
-  its marker, with an IQR under 50 ms. With the Screen Capture's Delay set (see
-  `screen_delay.py`), it should be about 0, give or take a frame. The face is
-  found as a change of the whole picture, so it doesn't matter how OBS
+- **Screen:** each face and each flash appears in the screen recording −20
+  to 200 ms after its marker, with an IQR under 50 ms. With the Screen
+  Capture's Delay set, it should be about 0, give or take a frame. The face
+  is found as a change of the whole picture, so it doesn't matter how OBS
   scales the screen into its canvas.
-- **Coverage:** EEG, gaze and screen each cover the whole procedure.
+- **Camera:** it films the participant. The eyes' jumps to each new cross,
+  timed in its video (MediaPipe's face landmarks) and in the gaze, are
+  within 60 ms of each other (IQR under 100 ms). The flashes' light on the
+  participant, when it shows, is within 60 ms of its markers.
+- **Markers:** each is recorded once.
+- **Coverage:** EEG, gaze, screen and camera each cover the whole procedure.
 
 The N170's latency is itself a check that the EEG and the markers line up:
 a misalignment of more than a few tens of ms moves it out of its window.
@@ -43,32 +61,42 @@ a misalignment of more than a few tens of ms moves it out of its window.
 | File | |
 |---|---|
 | [`face_validation.py`](face_validation.py) | The procedure, in PsychoPy. Every step is an LSL marker (stream `brAIndumpValidation`) stamped at the screen flip that shows it. |
-| [`make_project.py`](make_project.py) | Makes the brAIn dump project the procedure records with. |
+| [`make_project.py`](make_project.py) | Makes the brAIn dump project the procedure records with (`--lab` for the lab's booth). |
 | [`analyse.py`](analyse.py) | Checks a recording; writes `report.md` with figures. |
 | [`screen_delay.py`](screen_delay.py) | Measures how late OBS's NDI frames are: the value for the Screen Capture's Delay. |
 
 ## The procedure
 
 1. **Instructions**
-2. **Resting, eyes open**: 30 s, looking at a dot in the centre.
-3. **Resting, eyes closed**: 30 s; a tone says when to open them.
-4. **Eye-tracking calibration**: 9 points, drawn by PsychoPy and run by the
+2. **10 flashes**: the whole screen white for 200 ms, once a second.
+3. **Resting, eyes open**: 30 s, looking at a dot in the centre.
+4. **Resting, eyes closed**: 30 s; a tone says when to open them.
+5. **Eye-tracking calibration**: 9 points, drawn by PsychoPy and run by the
    GP3's server (OpenGP3's client-drawn calibration).
-5. **30 faces** in random order, each one:
+6. **2 moving targets**: a dot moving smoothly for 10 s (a Lissajous path),
+   followed with the eyes.
+7. **30 faces** in random order, each one:
    - a fixation cross at a random place on the screen (2 s);
    - the face, centred where the cross was (1 s);
    - a blank screen (1 s).
 
    The face appears where the participant is already looking, so no eye
    movement disturbs the N170.
-6. **Debriefing**
+8. **2 more moving targets and 10 more flashes**: the timing at the end.
+9. **Debriefing**
 
-The markers are `procedure_start`, `instructions`, `rest_open_start` and
+`--flashes 0` and `--pursuits 0` leave out the flashes and the moving
+targets.
+
+The markers are `procedure_start`, `instructions`, `flashes_start
+block=start`, `flash n= block=` and `flashes_end`, `rest_open_start` and
 `rest_open_end`, `rest_closed_start` and `rest_closed_end` (the tone),
 `calibration_start`, `calibration_point n= x= y=`, `calibration_result`,
-`calibration_end`, then for each trial `fixation trial= x= y=`,
-`face trial= image= x= y=` and `blank trial=`, then `debriefing` and
-`procedure_end`. Positions are fractions of the screen from the top left,
+`calibration_end`, `pursuit_ready trial=`, `pursuit_start trial= duration=
+ax= ay= fx= fy= phase= rate=` (the path: x = 0.5 + ax·sin(2π·fx·t), y = 0.5
++ ay·sin(2π·fy·t + phase)) and `pursuit_end`, then for each trial `fixation
+trial= x= y=`, `face trial= image= x= y=` and `blank trial=`, then the
+moving targets and flashes again, `debriefing` and `procedure_end`. Positions are fractions of the screen from the top left,
 the same frame as the GP3's gaze.
 
 ## Setting up (once)

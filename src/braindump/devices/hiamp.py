@@ -54,6 +54,8 @@ SIMULATED_SERIAL = "HA-SIMULATED"
 SIMULATED_CHANNELS = 64
 #: No amplifier filter (the driver's index for none).
 NO_FILTER = -1
+#: The BIDS types a channel other than EEG may have.
+CHANNEL_TYPES = ("EOG", "ECG", "EMG", "MISC")
 
 
 def _field(entry: dict, *words: str, default=None):
@@ -120,6 +122,10 @@ class HIampConfig(DeviceConfig):
     channel_count: int = 64
     #: Names of the channels, in order; the rest are Ch<n>.
     electrodes: list[str] = field(default_factory=list)
+    #: Channels that are not EEG, as "<channel number>=<BIDS type>", e.g.
+    #: "64=EOG" for a bipolar EOG lead on channel 64. Types: EOG, ECG,
+    #: EMG, MISC.
+    channel_types: list[str] = field(default_factory=list)
     #: Record the digital input (TRIG).
     digital_input: bool = True
     #: Delay of the USB link, in ms, taken off the time stamps.
@@ -142,6 +148,20 @@ class HIampConfig(DeviceConfig):
     view_filter: str = presets.DEFAULT_FILTER
     view_notch: str = presets.DEFAULT_NOTCH
     view_scaling: str = presets.DEFAULT_SCALING
+
+    def types_by_channel(self) -> dict[int, str]:
+        """The channels that are not EEG: 0-based number -> BIDS type."""
+        found = {}
+        for entry in self.channel_types or []:
+            number, _, kind = str(entry).partition("=")
+            kind = kind.strip().upper()
+            try:
+                index = int(number.strip()) - 1
+            except ValueError:
+                continue
+            if index >= 0 and kind in CHANNEL_TYPES:
+                found[index] = kind
+        return found
 
     def known_filters(self, kind: str) -> list[dict]:
         """The amplifier's filters of ``kind`` (bandpass or notch) at the
@@ -274,7 +294,7 @@ class _driver_filters:
 #: band-passes, and notches for 50 and 60 Hz.
 _SIMULATED_BANDPASS = ((0.01, 0), (0.1, 0), (0.5, 0), (1, 0), (2, 0),
                        (0.1, 30), (0.5, 30), (1, 30), (0.1, 100), (1, 100),
-                       (0.1, 200), (0.1, 1000))
+                       (0.1, 200), (0.1, 1000), (0.01, 100))
 _SIMULATED_NOTCH = ((48, 52), (58, 62))
 
 
@@ -665,11 +685,18 @@ class HIampDevice(Device):
                         amp_notch: Optional[dict]) -> None:
         cfg = self.config
         fs = self.rate
-        kinds = [("EEG", "uV") if r == SIGNAL else
-                 ("TRIG", NA) if r == TRIGGER else ("MISC", NA)
-                 for r in roles]
+        # The signal channels in order: EEG, unless typed otherwise
+        # (e.g. a bipolar EOG lead).
+        typed = cfg.types_by_channel()
+        kinds, signal_n = [], 0
+        for r in roles:
+            if r == SIGNAL:
+                kinds.append((typed.get(signal_n, "EEG"), "uV"))
+                signal_n += 1
+            else:
+                kinds.append(("TRIG", NA) if r == TRIGGER else ("MISC", NA))
         count = {k: sum(1 for t, _ in kinds if t == k)
-                 for k in ("EEG", "MISC", "TRIG")}
+                 for k in ("EEG", "EOG", "ECG", "EMG", "MISC", "TRIG")}
         write_json(path.with_name(path.name.replace("_eeg.bdf", "_eeg.json")), {
             "TaskName": target.entities.task,
             "SamplingFrequency": fs,
@@ -688,9 +715,9 @@ class HIampDevice(Device):
             "SoftwareVersions": f"brAIn dump {__version__}, "
                                 f"g.Pype {gp.__version__}",
             "EEGChannelCount": count["EEG"],
-            "EOGChannelCount": 0,
-            "ECGChannelCount": 0,
-            "EMGChannelCount": 0,
+            "EOGChannelCount": count["EOG"],
+            "ECGChannelCount": count["ECG"],
+            "EMGChannelCount": count["EMG"],
             "MiscChannelCount": count["MISC"],
             "MISCChannelCount": count["MISC"],
             "TriggerChannelCount": count["TRIG"],
@@ -715,7 +742,7 @@ class HIampDevice(Device):
                   ["name", "type", "units", "low_cutoff", "high_cutoff",
                    "notch", "sampling_frequency", "status"],
                   [[label, kind, unit,
-                    *(filtered if kind == "EEG" else (NA, NA, NA)), fs,
+                    *(filtered if unit == "uV" else (NA, NA, NA)), fs,
                     "good"]
                    for label, (kind, unit) in zip(labels, kinds)])
 
@@ -732,7 +759,7 @@ class HIampDevice(Device):
                     "LowerCutoffFrequency": f["low"] or NA,
                     "UpperCutoffFrequency": f["high"] or NA,
                     "Order": f["order"] or NA, "Type": f["type"] or NA,
-                    "Channels": "EEG"}
+                    "Channels": "every signal channel"}
         return found or NA
 
     # -- status ------------------------------------------------------------------

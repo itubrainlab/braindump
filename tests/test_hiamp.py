@@ -19,7 +19,9 @@ def test_records_named_channels_and_trigger_onsets(tmp_path):
     project = Project.create(tmp_path / "p", "P")
     project.add_device("hiamp", {"simulate": True, "channel_count": 16,
                                  "sampling_rate": 512,
-                                 "electrodes": ["Fp1", "Fp2", "F3"]})
+                                 "electrodes": ["Fp1", "Fp2", "F3"],
+                                 # A bipolar EOG lead on the last channel.
+                                 "channel_types": ["16=EOG"]})
     amp = make_device("hiamp", project.devices["hiamp"], project.folder)
     amp.start()
     try:
@@ -49,10 +51,14 @@ def test_records_named_channels_and_trigger_onsets(tmp_path):
     assert all(e["source"] == "digital input" for e in events)
     meta = json.loads((eeg / "sub-01_task-rest_eeg.json").read_text())
     assert meta["SamplingFrequency"] == 512
-    assert meta["EEGChannelCount"] == 16 and meta["TriggerChannelCount"] == 1
+    assert meta["EEGChannelCount"] == 15 and meta["EOGChannelCount"] == 1
+    assert meta["TriggerChannelCount"] == 1
     assert meta["RecordingTiming"]["Method"] == "fit"
     _, channels = read_tsv(eeg / "sub-01_task-rest_channels.tsv")
     assert channels[0]["name"] == "Fp1" and channels[-1]["type"] == "TRIG"
+    assert [c["type"] for c in channels[14:16]] == ["EEG", "EOG"]
+    # The amplifier's filters act on the EOG too.
+    assert channels[15]["units"] == "uV"
 
 
 @pytest.mark.slow

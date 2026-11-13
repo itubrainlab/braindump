@@ -4,27 +4,39 @@ brAIn dump: are the signals right, and are they in step?
     python validation/analyse.py <BIDS folder> --sub 01 [--ses 1]
         [--task facevalidation] [--run 1] [--out report_folder]
 
-Four checks, each passed or failed against the criteria below, written to
+Five checks, each passed or failed against the criteria below, written to
 ``report.md`` (with figures, when matplotlib is installed) and printed:
 
 1. **Alpha**: posterior alpha (8-13 Hz) is stronger with the eyes closed
    than open (the Berger effect): ratio >= 1.5.
-2. **Gaze accuracy**: while the participant looks at each fixation cross
+2. **EEG signal quality**: during the faces, at least 90 % of the EEG
+   channels, and every N170 and posterior site used, have 1-30 Hz noise
+   under 50 µV (SD).
+3. **Gaze accuracy**: while the participant looks at each fixation cross
    (0.6-2.0 s after it appears), the median gaze is within 1.5 degrees
    of it, for at least 80 % of the crosses.
-3. **N170**: the average EEG after the faces, at the occipito-temporal
+4. **N170**: the average EEG after the faces, at the occipito-temporal
    electrodes (PO7/PO8, average reference), has a negative peak between
    130 and 200 ms that is reliably below zero across trials (one-sample
    t-test, p < 0.05).
-4. **Synchronisation**: every device's data are on one timeline.
+5. **Synchronisation**: every device's data are on one timeline.
    - the markers in eeg/ and beh/ events.tsv are the same, to 1 ms;
    - the eyes reach each new cross 80-500 ms after its marker (a saccade
      cannot precede what it looks at, nor take half a second);
-   - gaze is lost within 3 s of "eyes closed" and back within 3 s of the
-     tone, and the EEG's alpha rises within 3 s of eyes closed;
-   - in the screen recording, each face appears -20 to 200 ms after its
-     marker (what the Screen Capture's Delay leaves: 0 when it is set right,
-     give or take a frame), with a spread (IQR) under 50 ms;
+   - the eyes follow the moving targets -50 to 150 ms behind them (smooth
+     pursuit of a predictable path lags little);
+   - the EOG (a channel typed EOG) moves with the gaze within 40 ms:
+     EEG against eye tracker, with no marker in between;
+   - gaze is lost within 3 s of "eyes closed"; the EEG's alpha rise is
+     reported;
+   - in the screen recording, each face and each flash appears -20 to
+     200 ms after its marker (what the Screen Capture's Delay leaves: 0
+     when it is set right, give or take a frame), with an IQR under 50 ms;
+   - the camera, filming the participant: the eyes' jumps to each new
+     cross, timed in its video (MediaPipe's face landmarks, as OpenGP3's
+     webcam tracking finds the eyes) and in the gaze, within 60 ms of
+     each other (IQR < 100 ms); and, when their light on the participant
+     shows, the flashes within 60 ms of their markers;
    - every recording covers the whole procedure.
 
 Times are compared on the EEG's timeline: brAIn dump gives event onsets
@@ -95,6 +107,9 @@ class Recording:
     k: float = 1.0
     markers: list[Marker] = field(default_factory=list)
     beh_markers: list[Marker] = field(default_factory=list)
+    #: Markers recorded more than once (same text, same onset), left out
+    #: of ``markers``.
+    duplicates: int = 0
     gaze_t: Optional[np.ndarray] = None       # EEG seconds
     gaze: Optional[np.ndarray] = None         # (n, 3): x, y, valid
     eyes_valid: Optional[np.ndarray] = None   # (n, 2): left, right valid
@@ -103,6 +118,8 @@ class Recording:
     distance_m: Optional[float] = None
     video: Optional[Path] = None
     frame_t: Optional[np.ndarray] = None      # EEG seconds
+    camera: Optional[Path] = None
+    camera_t: Optional[np.ndarray] = None     # EEG seconds
     notes: list[str] = field(default_factory=list)
 
     def first(self, kind: str) -> Optional[Marker]:
@@ -121,7 +138,8 @@ def load(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
     eeg_dir, beh_dir = base / "eeg", base / "beh"
 
     bdfs = sorted(eeg_dir.glob(f"{pattern}*_eeg.bdf"))
-    bdfs = [b for b in bdfs if "acq-unicorn" in b.name] or bdfs
+    bdfs = [b for b in bdfs if "acq-unicorn" in b.name] or \
+        [b for b in bdfs if "acq-hiamp" in b.name] or bdfs
     if bdfs:
         import pyedflib
         bdf = bdfs[0]
@@ -153,6 +171,15 @@ def load(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
         return []
     rec.markers = markers(eeg_dir) or markers(beh_dir)
     rec.beh_markers = markers(beh_dir)
+    # A marker recorded twice would count its trial twice: keep each once.
+    seen, unique = set(), []
+    for m in rec.markers:
+        key = (m.text, round(m.onset, 4))
+        if key not in seen:
+            seen.add(key)
+            unique.append(m)
+    rec.duplicates = len(rec.markers) - len(unique)
+    rec.markers = unique
     if not rec.markers:
         rec.notes.append(f"No markers from {MARKER_SOURCE} found.")
 
@@ -196,6 +223,14 @@ def load(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
             _, _, rec.frame_t = physio(frames)
     else:
         rec.notes.append("No screen recording (recording-screen) found.")
+    cameras = sorted(p for p in beh_dir.glob(f"{pattern}*_video.mp4")
+                     if "recording-screen" not in p.name)
+    if cameras:
+        rec.camera = cameras[0]
+        frames = cameras[0].with_name(cameras[0].name.replace(
+            "_video.mp4", "_physio.tsv.gz"))
+        if frames.exists():
+            _, _, rec.camera_t = physio(frames)
     return rec
 
 
@@ -433,10 +468,11 @@ def check_n170(rec: Recording, plt=None, out: Path = None) -> Check:
     return c
 
 
-def eeg_quality(rec: Recording) -> Check:
-    """Each EEG channel's mains hum and noise during the faces: the likely
-    reason when alpha or the N170 fails."""
-    c = Check("EEG signal quality", None, info=True)
+def check_eeg_quality(rec: Recording) -> Check:
+    """Each EEG channel's noise and mains hum during the faces: at least
+    90 % of the channels, and every site the alpha and N170 checks use,
+    must have 1-30 Hz noise under 50 µV (SD)."""
+    c = Check("EEG signal quality", None)
     if rec.eeg is None:
         c.lines.append("No EEG.")
         return c
@@ -452,26 +488,39 @@ def eeg_quality(rec: Recording) -> Check:
     sos = signal.butter(4, [1, 30], btype="bandpass", fs=rec.fs,
                         output="sos")
     sd = signal.sosfiltfilt(sos, x[:, eeg], axis=0).std(axis=0)
-    c.lines.append("During the faces. Poor contact shows as noise over 50 µV "
-                   "(1-30 Hz SD); strong mains hum (over 50 µV) hints at "
-                   "high impedance, but is filtered out of the checks.")
+    poor = [rec.labels[i] for i, s_ in zip(eeg, sd) if s_ > 50]
+    key = {rec.labels[i] for i in _channels(rec, N170_SITES)
+           + _channels(rec, POSTERIOR)}
+    key_poor = sorted(key & set(poor))
+    share = 1 - len(poor) / len(eeg)
+    c.passed = bool(share >= 0.9 and not key_poor)
+    c.lines.append(f"During the faces: **{share * 100:.0f} %** of {len(eeg)} "
+                   f"EEG channels with noise under 50 µV (pass: >= 90 %, and "
+                   f"every site the alpha and N170 checks use)")
+    others = [f"{rec.labels[i]} ({t})" for i, t in enumerate(rec.eeg_types)
+              if t not in ("EEG", "TRIG", "MISC")]
+    if others:
+        c.lines.append(f"Not EEG, left out: {', '.join(others)}")
+    if poor:
+        c.lines.append(f"Poor contact: {', '.join(poor)}"
+                       + (f"; among the sites the checks use: "
+                          f"{', '.join(key_poor)}" if key_poor else "")
+                       + ". Add gel or reseat these electrodes, and check the "
+                         "reference and ground; the data viewer should show "
+                         "a clean signal on each before recording.")
+    c.lines.append("")
+    c.lines.append("Poor contact shows as noise over 50 µV (1-30 Hz SD); "
+                   "strong mains hum (over 50 µV RMS) hints at high "
+                   "impedance, but the amplifier's notch and the checks' "
+                   "filters take it out.")
     c.lines.append("")
     c.lines.append("| Channel | Mains (µV RMS) | Noise 1-30 Hz (µV SD) | |")
     c.lines.append("|---|---|---|---|")
-    poor = []
     for i, m, s_ in zip(eeg, mains, sd):
-        bad = s_ > 50
-        poor += [rec.labels[i]] if bad else []
-        verdict = "poor" if bad else "good, mains high" if m > 50 \
+        verdict = "poor" if s_ > 50 else "good, mains high" if m > 50 \
             else "good"
         c.lines.append(f"| {rec.labels[i]} | {m:.1f} | {s_:.1f} | "
                        f"{verdict} |")
-    if poor:
-        c.lines.append("")
-        c.lines.append(f"Poor contact: {', '.join(poor)}. Wet or reseat these "
-                       f"electrodes and check the reference and ground behind "
-                       f"the ears; the data viewer's quality dots should be "
-                       f"green before recording.")
     return c
 
 
@@ -540,6 +589,242 @@ def _video_latencies(rec: Recording) -> list[float]:
     return out
 
 
+def _brightness(video: Path, ft: np.ndarray,
+                windows: list[tuple[float, float]]) -> np.ndarray:
+    """Each frame's mean brightness (0-255), for the frames within
+    ``windows`` (EEG seconds); NaN elsewhere."""
+    import cv2
+    wanted = np.zeros(len(ft), bool)
+    for a, b in windows:
+        wanted |= (ft >= a) & (ft <= b)
+    out = np.full(len(ft), np.nan)
+    capture = cv2.VideoCapture(str(video))
+    for i in range(len(ft)):
+        if not wanted[i]:
+            if not capture.grab():
+                break
+            continue
+        ok, frame = capture.read()
+        if not ok:
+            break
+        out[i] = float(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).mean())
+    capture.release()
+    return out
+
+
+def _flash_latencies(rec: Recording, video: Optional[Path],
+                     ft: Optional[np.ndarray]) -> tuple[list[float], int]:
+    """For each flash: when the video first shows the light, from its
+    marker; and how many flashes there were. The light is found as the
+    frame passing halfway from the dark before the flash to the brightest
+    frame after it, so a camera that sees only the light the screen casts
+    on the room finds it too."""
+    flashes = [m.onset for m in rec.all("flash")]
+    if video is None or ft is None or not flashes:
+        return [], len(flashes)
+    light = _brightness(video, ft, [(t - 0.6, t + 0.7) for t in flashes])
+    out = []
+    for onset in flashes:
+        base = light[(ft >= onset - 0.5) & (ft < onset - 0.05)]
+        after = np.flatnonzero((ft >= onset - 0.1) & (ft <= onset + 0.6))
+        base = base[~np.isnan(base)]
+        if len(base) < 2 or not len(after):
+            continue
+        peak = np.nanmax(light[after])
+        dark = float(np.median(base))
+        if not peak - dark > max(2.0, 4 * float(np.std(base))):
+            continue
+        lit = after[light[after] >= dark + (peak - dark) / 2]
+        if len(lit):
+            out.append(float(ft[lit[0]] - onset))
+    return out, len(flashes)
+
+
+def _pursuit_lags(rec: Recording) -> list[tuple[float, float]]:
+    """For each moving target: how far behind it the gaze is (s), and the
+    gaze's error from the target at that lag (degrees). The lag is the
+    shift of the target's path that brings it closest to the gaze, over
+    the movement after its first second (once the eyes have caught up)."""
+    out = []
+    for m in rec.all("pursuit_start"):
+        try:
+            duration, ax, ay, fx, fy, phase = (
+                float(m.field(k)) for k in ("duration", "ax", "ay", "fx",
+                                             "fy", "phase"))
+        except (TypeError, ValueError):
+            continue
+        sel = (rec.gaze_t >= m.onset + 1.0) & (rec.gaze_t <= m.onset + duration)
+        sel &= rec.gaze[:, 2] > 0
+        if sel.sum() < 30:
+            continue
+        t = rec.gaze_t[sel] - m.onset
+        gx, gy = rec.gaze[sel, 0], rec.gaze[sel, 1]
+        lags = np.arange(-0.3, 0.5001, 0.005)
+        errors = []
+        for lag in lags:
+            tt = t - lag
+            px = 0.5 + ax * np.sin(2 * np.pi * fx * tt)
+            py = 0.5 + ay * np.sin(2 * np.pi * fy * tt + phase)
+            errors.append(np.median(_degrees(rec, gx - px, gy - py)))
+        best = int(np.argmin(errors))
+        out.append((float(lags[best]), float(errors[best])))
+    return out
+
+
+def _xcorr(a: np.ndarray, b: np.ndarray, steps: int = 30
+           ) -> tuple[int, float]:
+    """The shift (in samples) of ``b`` against ``a`` that correlates them
+    best, and that correlation; positive: ``b`` comes later."""
+    a = (a - a.mean()) / (a.std() or 1)
+    b = (b - b.mean()) / (b.std() or 1)
+    lags = np.arange(-steps, steps + 1)
+    r = np.array([np.mean(a[max(0, -k):len(a) - max(0, k)]
+                          * b[max(0, k):len(b) - max(0, -k)]) for k in lags])
+    k = int(np.argmax(np.abs(r)))
+    return int(lags[k]), float(r[k])
+
+
+def _gaze_velocity(rec: Recording, grid: np.ndarray, axis: int
+                   ) -> np.ndarray:
+    """The gaze's velocity along ``axis`` on ``grid`` (s); 0 where it is
+    not valid."""
+    ok = rec.gaze[:, 2] > 0
+    valid = np.interp(grid, rec.gaze_t, ok.astype(float)) > 0.99
+    g = np.interp(grid, rec.gaze_t[ok], rec.gaze[ok, axis])
+    v = np.diff(g, prepend=g[0])
+    v[~valid] = 0
+    return v
+
+
+def _eog_lag(rec: Recording) -> Optional[tuple[float, float, str]]:
+    """How far the gaze lags the EOG (s), their correlation, and the
+    direction (horizontal or vertical) the EOG follows: the eye movements
+    measured by the EEG amplifier and by the eye tracker, compared
+    directly, with no marker in between. From the calibration to the end,
+    on their velocities (the saccades), 100 Hz."""
+    eog = [i for i, t in enumerate(rec.eeg_types) if t == "EOG"]
+    start = rec.first("calibration_end")
+    if not eog or rec.gaze is None or rec.eeg is None or start is None:
+        return None
+    grid = np.arange(start.onset, rec.markers[-1].onset, 0.01)
+    if len(grid) < 1000:
+        return None
+    sos = signal.butter(2, [0.2, 15], btype="bandpass", fs=rec.fs,
+                        output="sos")
+    e = signal.sosfiltfilt(sos, rec.eeg[:, eog[0]])
+    e = np.interp(grid, np.arange(len(e)) / rec.fs, e)
+    ev = np.diff(e, prepend=e[0])
+    best = None
+    for axis, name in ((0, "horizontal"), (1, "vertical")):
+        k, r = _xcorr(ev, _gaze_velocity(rec, grid, axis))
+        if best is None or abs(r) > abs(best[1]):
+            best = (k * 0.01, r, name)
+    return best
+
+
+def _camera_eyes(video: Path, ft: np.ndarray,
+                 windows: list[tuple[float, float]]):
+    """The eyes in the camera's video, by MediaPipe's face landmarks (as
+    OpenGP3's webcam eye tracking finds them): for each frame within
+    ``windows``, its time, the iris's horizontal and vertical position
+    within the eye (hundredths of its width), and whether the eyes are
+    open. None when MediaPipe is not available."""
+    import cv2
+    try:
+        from opengp3.webcam import WebcamEyeDetector
+        detector = WebcamEyeDetector()
+    except Exception:  # noqa: BLE001
+        return None
+    wanted = np.zeros(len(ft), bool)
+    for a, b in windows:
+        wanted |= (ft >= a) & (ft <= b)
+    rows = []
+    capture = cv2.VideoCapture(str(video))
+    for i in range(len(ft)):
+        if not wanted[i]:
+            if not capture.grab():
+                break
+            continue
+        ok, frame = capture.read()
+        if not ok:
+            break
+        eyes = detector.update(frame)
+        if eyes:
+            rows.append((ft[i], np.mean([e.feature_x for e in eyes]),
+                         np.mean([e.feature_y for e in eyes]), 1.0))
+        else:
+            rows.append((ft[i], np.nan, np.nan, 0.0))
+    capture.release()
+    return np.array(rows) if rows else np.empty((0, 4))
+
+
+def _jump_time(t: np.ndarray, v: np.ndarray, onset: float
+               ) -> Optional[float]:
+    """When ``v`` jumps from its level before ``onset`` to its level after:
+    the first of two samples past halfway, from ``onset``. None when there
+    is no clear jump (smaller than 5 times the noise before it)."""
+    before = (t >= onset - 1.0) & (t <= onset - 0.1)
+    after = (t >= onset + 0.9) & (t <= onset + 1.9)
+    if before.sum() < 4 or after.sum() < 4:
+        return None
+    lo, hi = float(np.median(v[before])), float(np.median(v[after]))
+    noise = float(np.median(np.abs(v[before] - lo))) * 1.48 + 1e-9
+    if abs(hi - lo) < 5 * noise:
+        return None
+    s = (t >= onset - 0.2) & (t <= onset + 0.9)
+    past = (v[s] - lo) / (hi - lo) > 0.5
+    idx = np.flatnonzero(past[:-1] & past[1:])
+    return float(t[s][idx[0]] - onset) if len(idx) else None
+
+
+def _camera_lag(rec: Recording):
+    """How far the camera's video lags the eye tracker: the eyes' jumps to
+    each new cross, timed in the camera's video (the iris within the eye,
+    by MediaPipe's face landmarks, as OpenGP3's webcam tracking finds it)
+    and in the gaze, by the same rule. No marker is in between, and the
+    gaze is on the EEG's timeline (checked against the EOG), so this
+    places the camera on it too. Returns (median lag s, IQR s, jumps,
+    share of frames with the eyes found), or None."""
+    if rec.camera is None or rec.camera_t is None or rec.gaze is None:
+        return None
+    fixations = _fixations(rec)
+    if len(fixations) < 5:
+        return None
+    windows = [(o - 1.2, o + 2.0) for o, _, _ in fixations]
+    eyes = _camera_eyes(rec.camera, rec.camera_t, windows)
+    if eyes is None or len(eyes) < 50:
+        return None
+    from scipy.signal import medfilt
+    seen = eyes[:, 3] > 0
+    found = float(np.mean(seen))
+    if seen.sum() < 50:
+        return None
+    et = eyes[seen, 0]
+    # The iris jitters by a frame or two: a 3-frame median steadies it.
+    cam = [medfilt(eyes[seen, 1], 3), medfilt(eyes[seen, 2], 3)]
+    ok = rec.gaze[:, 2] > 0
+    gt, gaze = rec.gaze_t[ok], [rec.gaze[ok, 0], rec.gaze[ok, 1]]
+    lags, previous = [], None
+    for onset, x, y in fixations:
+        if previous is not None:
+            dx, dy = abs(x - previous[0]), abs(y - previous[1])
+            # The direction the eyes moved most in (at least 15 % of the
+            # screen): the iris moves a few pixels in the camera.
+            axis = 0 if dx >= dy else 1
+            if max(dx, dy) >= 0.15:
+                c_ = _jump_time(et, cam[axis], onset)
+                g_ = _jump_time(gt, gaze[axis], onset)
+                if c_ is not None and g_ is not None:
+                    lags.append(c_ - g_)
+        previous = (x, y)
+    if len(lags) < 5:
+        return (None, None, len(lags), found)
+    lags = np.array(lags)
+    return (float(np.median(lags)),
+            float(np.subtract(*np.percentile(lags, [75, 25]))),
+            len(lags), found)
+
+
 def video_setup(rec: Recording) -> Check:
     """Whether OBS's picture has the screen's shape: if not, OBS scales or
     crops the screen into its canvas."""
@@ -573,20 +858,35 @@ def video_setup(rec: Recording) -> Check:
 
 
 def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
-    c = Check("Synchronisation of EEG, markers, eyes and screen", None)
+    c = Check("Synchronisation of EEG, markers, eyes, screen and camera", None)
     verdicts: list[bool] = []
+
+    # Markers: each recorded once.
+    if rec.markers:
+        ok = rec.duplicates == 0
+        verdicts.append(ok)
+        c.lines.append(f"- {'✓' if ok else '✗'} each marker recorded once "
+                       f"({rec.duplicates} recorded twice; pass: none). "
+                       + ("" if ok else "The checks count each once; the "
+                          "recording's events.tsv has them twice: a brAIn "
+                          "dump problem to report."))
 
     # Markers: the same in eeg/ and beh/.
     if rec.markers and rec.beh_markers:
-        pairs = list(zip(rec.markers, rec.beh_markers))
-        same = len(rec.markers) == len(rec.beh_markers) and all(
+        beh = []
+        for m in rec.beh_markers:
+            if not beh or (m.text, round(m.onset, 4)) != \
+                    (beh[-1].text, round(beh[-1].onset, 4)):
+                beh.append(m)
+        pairs = list(zip(rec.markers, beh))
+        same = len(rec.markers) == len(beh) and all(
             a.text == b.text for a, b in pairs)
         diff = max(abs(a.onset - b.onset) for a, b in pairs) * 1000
         ok = same and diff <= 1.0
         verdicts.append(ok)
         c.lines.append(f"- {'✓' if ok else '✗'} markers in eeg/ and beh/ "
                        f"events.tsv: {len(rec.markers)} and "
-                       f"{len(rec.beh_markers)}, onsets within "
+                       f"{len(beh)}, onsets within "
                        f"{diff:.3f} ms (pass: same, <= 1 ms)")
 
     # Coverage: every recording spans the procedure.
@@ -615,6 +915,36 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
         c.lines.append(f"- {'✓' if ok else '✗'} the eyes reach a new cross "
                        f"**{med:.0f} ms** after its marker (median of "
                        f"{len(latencies)}; pass: 80-500 ms)")
+
+    # Eyes vs markers: following the moving targets.
+    pursuit = _pursuit_lags(rec) if rec.gaze is not None else []
+    if pursuit:
+        lag = float(np.median([p[0] for p in pursuit])) * 1000
+        err = float(np.median([p[1] for p in pursuit]))
+        ok = -50 <= lag <= 150
+        verdicts.append(ok)
+        c.lines.append(f"- {'✓' if ok else '✗'} the eyes follow the moving "
+                       f"targets **{lag:.0f} ms** behind them (median of "
+                       f"{len(pursuit)}; pass: -50 to 150 ms), "
+                       f"{err:.1f}° from the target at that lag")
+    elif rec.all("pursuit_start"):
+        c.lines.append("- the moving targets: too little valid gaze to "
+                       "measure")
+
+    # EEG vs eyes: the EOG against the gaze, no markers in between.
+    eog = _eog_lag(rec)
+    if eog is not None:
+        lag, r, axis = eog
+        if abs(r) >= 0.3:
+            ok = abs(lag) <= 0.04
+            verdicts.append(ok)
+            c.lines.append(f"- {'✓' if ok else '✗'} the EOG moves with the "
+                           f"{axis} gaze, the gaze **{lag * 1000:+.0f} ms** "
+                           f"after it (r = {r:+.2f}; pass: within 40 ms)")
+        else:
+            c.lines.append(f"- the EOG does not follow the gaze (best r = "
+                           f"{r:+.2f}, {axis}): not measured. Check the EOG "
+                           f"electrodes (beside the eyes) and their channel.")
 
     # Eyes and EEG vs markers: closing and opening the eyes.
     closed, opened = rec.first("rest_closed_start"), rec.first(
@@ -670,6 +1000,95 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
             ax.legend(["face on screen (video)"] +
                       (["gaze on the new cross"] if latencies else []))
             c.figure = _save(fig, out, "sync.png", plt)
+    # Screen vs markers: the flashes.
+    flashes, n_flashes = _flash_latencies(rec, rec.video, rec.frame_t) \
+        if rec.video is not None else ([], 0)
+    if n_flashes and len(flashes) < n_flashes / 2:
+        verdicts.append(False)
+        c.lines.append(f"- ✗ flashes found in the screen recording for only "
+                       f"{len(flashes)} of {n_flashes} (pass: at least half): "
+                       f"is OBS capturing the stimulus screen?")
+    elif flashes:
+        v = np.array(flashes) * 1000
+        med = float(np.median(v))
+        iqr = float(np.subtract(*np.percentile(v, [75, 25])))
+        ok = -20 <= med <= 200 and iqr < 50
+        verdicts.append(ok)
+        c.lines.append(f"- {'✓' if ok else '✗'} flashes appear in the screen "
+                       f"recording **{med:.0f} ms** after their markers (IQR "
+                       f"{iqr:.0f} ms, {len(v)}/{n_flashes}; pass: -20 to 200 "
+                       f"ms, IQR < 50 ms)")
+
+    # Camera vs eye tracker: the eyes it films against the gaze.
+    if rec.camera is not None:
+        measured = len(verdicts)
+        camera = _camera_lag(rec)
+        if camera is None:
+            c.lines.append("- the camera's eyes: not measured (MediaPipe "
+                           "missing, or too few frames with a face)")
+        elif camera[0] is None:
+            c.lines.append(f"- the eyes' jumps found in the camera's video: "
+                           f"{camera[2]} (eyes found in {camera[3] * 100:.0f}"
+                           f" % of frames): too few to measure. The camera "
+                           f"should see the participant's face, close enough "
+                           f"for the eyes, and lit.")
+        else:
+            lag, iqr, n, found = camera
+            ok = abs(lag) <= 0.06 and iqr < 0.1
+            verdicts.append(ok)
+            c.lines.append(f"- {'✓' if ok else '✗'} the camera films the eyes' "
+                           f"jumps **{lag * 1000:+.0f} ms** after the eye "
+                           f"tracker records them (IQR {iqr * 1000:.0f} ms, "
+                           f"{n} jumps, eyes found in {found * 100:.0f} % of "
+                           f"frames; pass: within 60 ms, IQR < 100 ms)")
+            if abs(lag) > 0.02 and iqr < 0.1:
+                c.lines.append(f"  Steady: add {lag * 1000:.0f} ms to the "
+                               f"Video Stream's Delay in brAIn dump, and its "
+                               f"frames are placed when they were taken.")
+            elif iqr >= 0.1:
+                c.lines.append("  Uneven: the camera's frames arrive with a "
+                               "varying delay (a camera that buffers frames, "
+                               "or a busy computer). Try a lower resolution "
+                               "or frame rate, or another camera.")
+        # The flashes, as their light on the participant: only when seen.
+        cam_flashes, n_cam = _flash_latencies(rec, rec.camera, rec.camera_t)
+        if n_cam and len(cam_flashes) >= n_cam / 2:
+            v = np.array(cam_flashes) * 1000
+            med = float(np.median(v))
+            iqr = float(np.subtract(*np.percentile(v, [75, 25])))
+            ok = -60 <= med <= 60 and iqr < 70
+            verdicts.append(ok)
+            c.lines.append(f"- {'✓' if ok else '✗'} the flashes' light shows in "
+                           f"the camera **{med:.0f} ms** after their markers "
+                           f"(IQR {iqr:.0f} ms, {len(v)}/{n_cam}; pass: within "
+                           f"60 ms, IQR < 70 ms)")
+        elif n_cam:
+            c.lines.append(f"- the flashes' light shows in the camera for "
+                           f"{len(cam_flashes)} of {n_cam} (information: a "
+                           f"camera on the participant sees them only in a "
+                           f"dim room)")
+        if len(verdicts) == measured:
+            verdicts.append(False)
+            c.lines.append("- ✗ the camera's timing could not be measured: "
+                           "neither the participant's eyes nor the flashes' "
+                           "light were found in its video")
+
+    # The camera covers the procedure too.
+    if rec.markers and rec.camera_t is not None:
+        start, end = rec.markers[0].onset, rec.markers[-1].onset
+        a_, b_ = rec.camera_t[0], rec.camera_t[-1]
+        ok = a_ <= start + 0.5 and b_ >= end - 0.5
+        verdicts.append(ok)
+        c.lines.append(f"- {'✓' if ok else '✗'} camera covers the procedure "
+                       f"({a_:.1f}-{b_:.1f} s)")
+        gaps = np.diff(rec.camera_t)
+        if len(gaps):
+            nominal = float(np.median(gaps))
+            dropped = int(np.sum(np.round(gaps / nominal) - 1))
+            c.lines.append(f"  {len(rec.camera_t)} frames at "
+                           f"{1 / nominal:.1f} fps, {max(0, dropped)} "
+                           f"missing (information)")
+
     c.passed = all(verdicts) if verdicts else None
     if not verdicts:
         c.lines.append("Nothing to compare: needs markers and at least one "
@@ -745,9 +1164,9 @@ def analyse(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
             import matplotlib.pyplot as plt  # noqa: F811
         except ImportError:
             plt = None
-    checks = [check_alpha(rec, plt, out), check_gaze(rec, plt, out),
-              check_n170(rec, plt, out), check_sync(rec, plt, out),
-              eeg_quality(rec), video_setup(rec)]
+    checks = [check_alpha(rec, plt, out), check_eeg_quality(rec),
+              check_gaze(rec, plt, out), check_n170(rec, plt, out),
+              check_sync(rec, plt, out), video_setup(rec)]
     if out is not None:
         _write_report(out / "report.md", rec, checks)
     return checks

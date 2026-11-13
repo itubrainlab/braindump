@@ -1,16 +1,21 @@
 """brAIn dump validation procedure (PsychoPy).
 
 Checks that brAIn dump records the lab's signals correctly and in step:
-EEG (g.tec Unicorn), gaze (Gazepoint GP3), the screen (OBS over NDI) and
-this procedure's own events, sent as Lab Streaming Layer markers.
+EEG (g.HIamp or Unicorn), gaze (Gazepoint GP3 or GP3 HD), the screen (OBS
+over NDI), a camera, and this procedure's own events, sent as Lab
+Streaming Layer markers.
 
     1. Instructions
-    2. 30 s resting, eyes open
-    3. 30 s resting, eyes closed (a tone says when to open them)
-    4. Eye-tracking calibration (drawn here, run by the GP3's server)
-    5. 30 faces in random order: a fixation cross at a random place (2 s),
+    2. 10 flashes of the whole screen (for the screen recording and the
+       camera)
+    3. 30 s resting, eyes open
+    4. 30 s resting, eyes closed (a tone says when to open them)
+    5. Eye-tracking calibration (drawn here, run by the GP3's server)
+    6. 2 moving targets to follow with the eyes (10 s each)
+    7. 30 faces in random order: a fixation cross at a random place (2 s),
        the face where the cross was (1 s), a blank screen (1 s)
-    6. Debriefing
+    8. 2 more moving targets, then 10 more flashes
+    9. Debriefing
 
 Every step is an LSL marker (stream "brAIndumpValidation", type
 "Markers"), stamped at the screen flip that shows it. Run it with
@@ -44,6 +49,12 @@ FIXATION_S, FACE_S, BLANK_S = 2.0, 1.0, 1.0
 MARGIN = 0.12
 #: Face height, as a fraction of the screen's height.
 FACE_HEIGHT = 0.30
+#: The flashes: white for FLASH_ON_S, then black for FLASH_OFF_S.
+FLASH_ON_S, FLASH_OFF_S = 0.2, 0.8
+#: The moving targets: a Lissajous path around the centre, in screen
+#: fractions; slow enough to follow smoothly (under 20 degrees/s).
+PURSUIT_S, PURSUIT_AX, PURSUIT_AY = 10.0, 0.30, 0.25
+PURSUIT_FX, PURSUIT_FY = 0.20, 0.30
 IMAGE_TYPES = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
 
 
@@ -54,6 +65,10 @@ def parse_args(argv=None):
     p.add_argument("--participant", default="",
                    help="participant label, for the log file")
     p.add_argument("--trials", type=int, default=30)
+    p.add_argument("--flashes", type=int, default=10,
+                   help="flashes at the start and at the end (0: none)")
+    p.add_argument("--pursuits", type=int, default=2,
+                   help="moving targets before and after the faces (0: none)")
     p.add_argument("--rest", type=float, default=30.0,
                    help="seconds of each resting period")
     p.add_argument("--gp3-host", default="127.0.0.1",
@@ -234,6 +249,8 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     if args.dry_run:
         args.rest, args.trials = min(args.rest, 4.0), min(args.trials, 6)
+        args.flashes, args.pursuits = min(args.flashes, 3), \
+            min(args.pursuits, 1)
     rng = random.Random(args.seed)
     faces = faces_from(args.faces, args.trials, rng)
 
@@ -253,6 +270,15 @@ def main(argv=None) -> int:
     cross = visual.ShapeStim(win, vertices="cross", size=0.05,
                              fillColor="white", lineColor=None)
     dot = visual.Circle(win, radius=0.006, fillColor="white", lineColor=None)
+    aspect = win.size[0] / win.size[1]
+    white = visual.Rect(win, width=aspect * 1.1, height=1.1,
+                        fillColor="white", lineColor=None)
+    black = visual.Rect(win, width=aspect * 1.1, height=1.1,
+                        fillColor="black", lineColor=None)
+    target = visual.Circle(win, radius=0.012, fillColor="white",
+                           lineColor=None)
+    centre = visual.Circle(win, radius=0.003, fillColor="red",
+                           lineColor=None)
     tone = sound.Sound("A", secs=0.4)
 
     def show(message: str, keys=("space",)) -> None:
@@ -279,6 +305,61 @@ def main(argv=None) -> int:
             if event.getKeys(["escape"]):
                 raise Escaped
 
+    def flashes(block: str) -> None:
+        """The whole screen white for a moment, ``args.flashes`` times: a
+        sharp change for the screen recording and the camera to show."""
+        if args.flashes <= 0:
+            return
+        hold(1.0, black, f"flashes_start block={block}")
+        for n in range(1, args.flashes + 1):
+            hold(FLASH_ON_S, white, f"flash n={n} block={block}")
+            hold(FLASH_OFF_S, black)
+        markers.on_flip(win, f"flashes_end block={block}")
+        win.flip()
+
+    pursuit_count = [0]
+
+    def pursuits(how_many: int) -> None:
+        """Targets moving smoothly along a known path, for the eyes to
+        follow: the gaze then traces the path, and its delay against the
+        markers is measured over the whole movement, not only at a jump."""
+        import math
+        for _ in range(how_many):
+            pursuit_count[0] += 1
+            k = pursuit_count[0]
+            phase = rng.uniform(0, 2 * math.pi)
+            n = frames(PURSUIT_S)
+
+            def at(i):
+                t = i / rate
+                return (0.5 + PURSUIT_AX * math.sin(2 * math.pi * PURSUIT_FX * t),
+                        0.5 + PURSUIT_AY * math.sin(2 * math.pi * PURSUIT_FY * t
+                                                    + phase))
+            x0, y0 = at(0)
+            target.pos = centre.pos = ((x0 - 0.5) * aspect, 0.5 - y0)
+            for i in range(frames(1.0)):
+                target.draw()
+                centre.draw()
+                if i == 0:
+                    markers.on_flip(win, f"pursuit_ready trial={k}")
+                win.flip()
+            for i in range(n):
+                x, y = at(i)
+                target.pos = centre.pos = ((x - 0.5) * aspect, 0.5 - y)
+                target.draw()
+                centre.draw()
+                if i == 0:
+                    markers.on_flip(
+                        win, f"pursuit_start trial={k} duration={n / rate:.4f} "
+                        f"ax={PURSUIT_AX} ay={PURSUIT_AY} fx={PURSUIT_FX} "
+                        f"fy={PURSUIT_FY} phase={phase:.5f} rate={rate:.4f}")
+                win.flip()
+                if event.getKeys(["escape"]):
+                    raise Escaped
+            markers.on_flip(win, f"pursuit_end trial={k}")
+            win.flip()
+            core.wait(0.5)
+
     log_rows = []
     try:
         # 0. brAIn dump must be receiving the markers before anything.
@@ -301,23 +382,31 @@ def main(argv=None) -> int:
         markers.on_flip(win, "instructions")
         show("Welcome, and thank you for taking part.\n\n"
              "This short session checks the lab's recording equipment.\n\n"
-             f"First, you will rest for {args.rest:.0f} seconds with your eyes "
-             f"open, looking at a dot, and {args.rest:.0f} seconds with your "
-             "eyes closed. Then the eye tracker is calibrated: follow the "
-             "dot with your eyes. Then you will see faces: look at each "
-             "cross, and keep looking there when the face appears.\n\n"
+             "The screen will flash a few times. Then you will rest for "
+             f"{args.rest:.0f} seconds with your eyes open, looking at a dot, "
+             f"and {args.rest:.0f} seconds with your eyes closed. Then the "
+             "eye tracker is calibrated: follow the dot with your eyes. "
+             "Follow the moving dots with your eyes, too. Then you will see "
+             "faces: look at each cross, and keep looking there when the "
+             "face appears.\n\n"
              "Please sit still and relax your face and jaw.\n\n"
              "Experimenter: make sure brAIn dump is recording.\n\n"
              "Press space to begin.")
 
-        # 2. Resting, eyes open
+        # 2. Flashes
+        if args.flashes > 0:
+            show("First, the screen flashes a few times. Just look at the "
+                 "screen.\n\nPress space to start.")
+            flashes("start")
+
+        # 3. Resting, eyes open
         show(f"Rest with your eyes OPEN for {args.rest:.0f} seconds, looking "
              "at the dot in the centre.\n\nPress space to start.")
         hold(args.rest, dot, "rest_open_start")
         markers.on_flip(win, "rest_open_end")
         win.flip()
 
-        # 3. Resting, eyes closed
+        # 4. Resting, eyes closed
         show(f"Now rest with your eyes CLOSED for {args.rest:.0f} seconds.\n\n"
              "Close your eyes when you press space, and keep them closed "
              "until you hear a tone.\n\nPress space to start.")
@@ -327,7 +416,7 @@ def main(argv=None) -> int:
         win.flip()
         core.wait(0.5)
 
-        # 4. Eye-tracking calibration
+        # 5. Eye-tracking calibration
         show("Open your eyes.\n\nNext, the eye tracker is calibrated: follow "
              "the dot with your eyes until it stops.\n\nPress space to start.")
         try:
@@ -341,11 +430,16 @@ def main(argv=None) -> int:
                  "then press space here.")
             markers.send("calibration_end")
 
-        # 5. Faces
+        # 6. Moving targets
+        if args.pursuits > 0:
+            show("Now follow the moving dot with your eyes, as closely as "
+                 "you can, until it stops.\n\nPress space to start.")
+            pursuits(args.pursuits)
+
+        # 7. Faces
         show(f"Now {args.trials} faces.\n\nEach time, look at the cross where "
              "it appears, and keep looking there when the face comes.\n\n"
              "Press space to start.")
-        aspect = win.size[0] / win.size[1]
         # Every face is loaded before the first trial: loading one between
         # screens would hold the screen before it for an extra frame.
         images = []
@@ -367,11 +461,22 @@ def main(argv=None) -> int:
             log_rows.append({"trial": trial, "image": face.name,
                              "x": f"{fx:.4f}", "y": f"{fy:.4f}"})
 
-        # 6. Debriefing
+        # 8. Moving targets and flashes again: the timing at the end
+        if args.pursuits > 0:
+            show("Follow the moving dot with your eyes again.\n\n"
+                 "Press space to start.")
+            pursuits(args.pursuits)
+        if args.flashes > 0:
+            show("The screen flashes once more. Just look at the screen."
+                 "\n\nPress space to start.")
+            flashes("end")
+
+        # 9. Debriefing
         markers.on_flip(win, "debriefing")
         show("That is all, thank you!\n\nThis session checked that the EEG, "
-             "the eye tracker, the screen recording and the experiment's "
-             "events are recorded correctly and in time with each other.\n\n"
+             "the eye tracker, the screen recording, the camera and the "
+             "experiment's events are recorded correctly and in time with "
+             "each other.\n\n"
              "Experimenter: stop recording in brAIn dump, then press space.")
         markers.send("procedure_end")
         status = 0
