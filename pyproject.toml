@@ -44,7 +44,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7", "bids-validator-deno>=2.0"]
+test = ["pytest>=7", "pytest-xdist>=3.5", "bids-validator-deno>=2.0"]
 # The Shimmer's driver is GPL-3.0, so it is optional.
 shimmer = ["pyshimmer>=1.0"]
 # The validation procedure's analysis (validation/analyse.py) draws figures.
