@@ -64,3 +64,44 @@ def test_markers_become_events(tmp_path):
     assert 0.2 < onset < 0.8
     assert int(rows[0]["sample"]) == round(onset * 250)
     assert events.with_suffix(".json").exists()
+
+
+@pytest.mark.slow
+def test_a_procedure_run_again_is_recorded_once(tmp_path):
+    """The 2026-11-11 validation recorded every marker twice. Its procedure
+    had been started, aborted and started again: the second run's outlet
+    had the first's name and source_id, LSL's recovery re-attached the
+    first run's inlet to it, and the resolver opened another. Each inlet
+    now keeps to its own outlet, so each marker arrives once."""
+    def outlet():
+        return pylsl.StreamOutlet(pylsl.StreamInfo(
+            "BrainDumpTestRerun", "Markers", 1, 0, "string",
+            "bd-test-rerun"))
+
+    project = Project.create(tmp_path / "p", "P")
+    project.add_device("lsl", {"streams": [{"name": "BrainDumpTestRerun"}]})
+    lsl = make_device("lsl", project.devices["lsl"], project.folder)
+    pipeline = connect_all([lsl])
+    try:
+        first = outlet()                    # the procedure's first run
+        assert first.wait_for_consumers(10)
+        first.push_sample(["first run"])
+        time.sleep(0.5)
+        del first                           # aborted: its outlet is gone
+        time.sleep(1.0)
+        second = outlet()                   # started again
+        assert second.wait_for_consumers(10)
+        # Long enough for the old inlet to have recovered (it did within
+        # a second) and for the resolver to look again.
+        for i in range(16):
+            second.push_sample([f"marker {i}"])
+            time.sleep(0.25)
+        time.sleep(1.0)
+        values = [e.value for e in lsl.log
+                  if e.source == "lsl:BrainDumpTestRerun"]
+        assert values.count("marker 0") == 1
+        assert sorted(set(values)) == sorted(values), values
+        assert len([v for v in values if v.startswith("marker")]) == 16
+        assert len(lsl.inlets) == 1
+    finally:
+        pipeline.stop()

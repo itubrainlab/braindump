@@ -104,7 +104,14 @@ class Graph:
 
 
 class _Inlet:
-    """One connected stream, pulled on its own thread."""
+    """One connected stream, pulled on its own thread.
+
+    An inlet keeps to the one outlet it was opened on. LSL's recovery
+    would re-attach it, once its outlet is gone, to any new outlet with
+    the same name and source_id (a procedure run again, say), while the
+    resolver opens an inlet on that new outlet too: every marker would
+    then be recorded twice. So when its outlet is lost, the inlet closes,
+    and the resolver opens one on whatever stream comes next."""
 
     def __init__(self, device: "LslDevice", info):
         import pylsl
@@ -113,7 +120,7 @@ class _Inlet:
         self.name = info.name()
         self.uid = info.uid()
         self.inlet = pylsl.StreamInlet(info, max_buflen=360,
-                                       recover=True)
+                                       recover=False)
         self.correction = 0.0
         self._corrected_at = 0.0
         self.samples = 0
@@ -123,7 +130,12 @@ class _Inlet:
         self.thread.start()
 
     def _pull(self):
-        import pylsl
+        # pylsl 1.16 exported LostError at the top; 1.17 and later keep it
+        # in pylsl.util only.
+        try:
+            from pylsl.util import LostError
+        except ImportError:  # pragma: no cover - older pylsl
+            from pylsl import LostError
         while self.running:
             now = time.monotonic()
             if now - self._corrected_at > CLOCK_EVERY_S:
@@ -134,8 +146,13 @@ class _Inlet:
                     pass
             try:
                 chunk, stamps = self.inlet.pull_chunk(timeout=0.2)
-            except pylsl.LostError:
-                continue
+            except LostError:
+                # The outlet is gone: the resolver connects again when a
+                # stream (this one back, or a new one) appears.
+                if self.running:
+                    self.device._inlet_failed(self, "stream lost")
+                self._close_inlet()
+                return
             except Exception as error:  # noqa: BLE001
                 if self.running:
                     self.device._inlet_failed(self, str(error))
@@ -156,7 +173,11 @@ class _Inlet:
 
     def close(self):
         self.running = False
-        self.thread.join(timeout=1.0)
+        if self.thread is not threading.current_thread():
+            self.thread.join(timeout=1.0)
+        self._close_inlet()
+
+    def _close_inlet(self):
         try:
             self.inlet.close_stream()
         except Exception:  # noqa: BLE001
@@ -188,6 +209,10 @@ class LslDevice(Device):
         self._events_lock = threading.Lock()
         self._running = False
         self._resolver: Optional[threading.Thread] = None
+        #: Counts the connections: a resolver from an earlier one that
+        #: outlived its join stops instead of opening inlets of its own.
+        self._generation = 0
+        self._inlets_lock = threading.Lock()
         self._outlet = None
         self._sim_thread: Optional[threading.Thread] = None
         self._offset = 0.0
@@ -225,8 +250,10 @@ class LslDevice(Device):
         if self.simulated:
             self._start_simulation()
         self._running = True
-        self._resolver = threading.Thread(target=self._resolve, daemon=True,
-                                          name="lsl-resolve")
+        self._generation += 1
+        self._resolver = threading.Thread(target=self._resolve,
+                                          args=(self._generation,),
+                                          daemon=True, name="lsl-resolve")
         self._resolver.start()
 
     def closing(self) -> None:
@@ -234,9 +261,10 @@ class LslDevice(Device):
         if self._resolver:
             self._resolver.join(timeout=3.0)
             self._resolver = None
-        for inlet in list(self.inlets.values()):
+        with self._inlets_lock:
+            inlets, self.inlets = list(self.inlets.values()), {}
+        for inlet in inlets:
             inlet.close()
-        self.inlets = {}
         self._outlet = None
         if self._sim_thread:
             self._sim_thread.join(timeout=1.0)
@@ -252,29 +280,37 @@ class LslDevice(Device):
             selectors = [{"name": SIMULATED_STREAM}]
         return selectors
 
-    def _resolve(self):
+    def _resolve(self, generation: int):
         import pylsl
-        while self._running:
+
+        def current() -> bool:
+            return self._running and generation == self._generation
+        while current():
             try:
                 found = pylsl.resolve_streams(self.config.resolve_timeout)
             except Exception:  # noqa: BLE001
                 found = []
             for info in found:
-                if not self._running:
+                if not current():
                     break
-                if info.uid() in self.inlets:
+                if not any(matches(s, info) for s in self._selectors()):
                     continue
-                if any(matches(s, info) for s in self._selectors()):
+                # Checked and opened under the lock: one inlet a stream.
+                with self._inlets_lock:
+                    if not current() or info.uid() in self.inlets:
+                        continue
                     try:
                         self.inlets[info.uid()] = _Inlet(self, info)
                     except Exception:  # noqa: BLE001
                         pass
             deadline = time.monotonic() + RESOLVE_EVERY_S
-            while self._running and time.monotonic() < deadline:
+            while current() and time.monotonic() < deadline:
                 time.sleep(0.1)
 
     def _inlet_failed(self, inlet: _Inlet, message: str) -> None:
-        self.inlets.pop(inlet.uid, None)
+        with self._inlets_lock:
+            if self.inlets.get(inlet.uid) is inlet:
+                del self.inlets[inlet.uid]
 
     def _event(self, event: Event) -> None:
         with self._events_lock:
