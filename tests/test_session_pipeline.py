@@ -63,6 +63,7 @@ def test_one_gpype_pipeline_carries_every_device(tmp_path):
     assert (beh / "sub-01_task-rest_recording-webcam_video.mp4").exists()
 
 
+@pytest.mark.slow
 def test_connecting_another_device_restarts_the_pipeline(tmp_path):
     project, (gp3, shimmer), pipeline = _devices(tmp_path,
                                                  ["gp3", "shimmer"])

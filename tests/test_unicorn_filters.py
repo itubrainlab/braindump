@@ -4,6 +4,7 @@ changes what is shown."""
 import json
 import time
 
+import pytest
 import numpy as np
 import pyedflib
 from scipy import signal
@@ -83,6 +84,7 @@ def _high_share(data):
     return p[f > 40].sum() / p[f > 2].sum()
 
 
+@pytest.mark.slow
 def test_recording_is_filtered_and_described(tmp_path):
     # The view shows everything; the recording is low-passed at 20 Hz.
     filtered, meta, rows = _record(tmp_path, "filtered", {

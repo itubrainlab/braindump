@@ -1,14 +1,13 @@
-# Test brAIn dump on Linux, Windows and macOS; build the three packages,
-# install each on its own platform and check it with every device
-# simulated. A pushed v* tag then publishes them as that release, with
-# docs/releases/<tag>.md as its notes.
-name: Test and build
+# The release build, run only for a pushed v* tag (or by hand): every test
+# on Linux, Windows and macOS, then the three packages, each installed on
+# its own platform and checked with every device simulated. A tag then
+# publishes them as that release, with docs/releases/<tag>.md as its notes.
+# Pushes and pull requests get the quick check instead (check.yml).
+name: Release
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
 
 env:

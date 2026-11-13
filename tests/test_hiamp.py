@@ -3,6 +3,7 @@ amplifier."""
 import json
 import time
 
+import pytest
 import numpy as np
 import pyedflib
 
@@ -13,6 +14,7 @@ from braindump.project import Project
 from braindump.recording import Session, Subject
 
 
+@pytest.mark.slow
 def test_records_named_channels_and_trigger_onsets(tmp_path):
     project = Project.create(tmp_path / "p", "P")
     project.add_device("hiamp", {"simulate": True, "channel_count": 16,
@@ -53,6 +55,7 @@ def test_records_named_channels_and_trigger_onsets(tmp_path):
     assert channels[0]["name"] == "Fp1" and channels[-1]["type"] == "TRIG"
 
 
+@pytest.mark.slow
 def test_two_eeg_amplifiers_get_their_own_acq(tmp_path):
     project = Project.create(tmp_path / "p", "P")
     project.add_device("unicorn", {"simulate": True})

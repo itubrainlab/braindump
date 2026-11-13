@@ -189,21 +189,25 @@ def test_good_recording_passes(tmp_path):
     assert (report / "n170.png").exists()
 
 
+@pytest.mark.slow
 def test_catches_no_alpha_effect(tmp_path):
     checks, _ = run(tmp_path, alpha=False)
     assert checks["EEG"].passed is False
 
 
+@pytest.mark.slow
 def test_catches_inaccurate_gaze(tmp_path):
     checks, _ = run(tmp_path, gaze_offset=0.06)   # about 3.5 degrees
     assert checks["Gaze"].passed is False
 
 
+@pytest.mark.slow
 def test_catches_missing_n170(tmp_path):
     checks, _ = run(tmp_path, n170=False)
     assert checks["N170"].passed is False
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("shift", [0.3, -0.3])
 def test_catches_markers_out_of_step(tmp_path, shift):
     """Markers 300 ms late (or early) against the EEG, eyes and screen."""
@@ -228,6 +232,7 @@ def test_procedure_project_and_analysis_agree():
     assert task == "facevalidation"
 
 
+@pytest.mark.slow
 def test_make_project(tmp_path):
     import subprocess
     out = subprocess.run(
@@ -246,6 +251,7 @@ def test_make_project(tmp_path):
     assert "Project:" in out.stdout
 
 
+@pytest.mark.slow
 def test_screen_recording_scaled_and_late(tmp_path):
     """As in the first session with real hardware: OBS's canvas scaled and
     cropped the screen, and its frames came 390 ms after the screen
@@ -261,6 +267,7 @@ def test_screen_recording_scaled_and_late(tmp_path):
     assert "Set the Screen Capture's Delay to" in text
 
 
+@pytest.mark.slow
 def test_screen_recording_scaled_but_in_time(tmp_path):
     checks, _ = run(tmp_path, video_scale=1.44)
     assert checks["Synchronisation"].passed, checks["Synchronisation"].lines

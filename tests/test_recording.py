@@ -4,6 +4,7 @@ import gzip
 import json
 import time
 
+import pytest
 import pyedflib
 
 from conftest import connect_all
@@ -13,6 +14,7 @@ from braindump.project import Project
 from braindump.recording import Session, Subject
 
 
+@pytest.mark.slow
 def test_session_records_both_devices(tmp_path):
     project = Project.create(tmp_path / "study", "Study")
     project.add_device("unicorn", {"simulate": True})
@@ -72,6 +74,7 @@ def test_session_records_both_devices(tmp_path):
     assert session.dataset.next_run("01", "1", "rest") == 2
 
 
+@pytest.mark.slow
 def test_eye_tracking_alone_goes_to_beh(tmp_path):
     project = Project.create(tmp_path / "s", "S")
     gp3 = make_device("gp3", {"simulate": True}, project.folder)
