@@ -40,21 +40,37 @@ INDEX = {name: i for i, name in enumerate(CHANNELS)}
 CAMERA_SIZE = (752, 480)
 #: The GP3's frame rate.
 RATE = 60.0
-#: The models OpenGP3 drives, and the frame rates each can run at.
-MODELS = ("GP3", "GP3 HD")
+#: The trackers OpenGP3 drives, and the frame rates each can run at. A
+#: webcam is OpenGP3's low-accuracy webcam eye tracking.
+WEBCAM = "Webcam"
+MODELS = ("GP3", "GP3 HD", WEBCAM)
 HD_RATES = (150, 60)
+#: A webcam's usual frame rate, until one has been connected.
+WEBCAM_RATE = 30.0
 
 
-def nominal_rate(model: str, hd_rate: float = HD_RATES[0]) -> float:
+def nominal_rate(model: str, hd_rate: float = HD_RATES[0],
+                 webcam_rate: float = WEBCAM_RATE) -> float:
     """The frame rate a ``model`` runs at: the GP3 always 60 Hz, the GP3 HD
-    at ``hd_rate``."""
+    at ``hd_rate``, a webcam at ``webcam_rate``."""
+    if model == WEBCAM:
+        return float(webcam_rate or WEBCAM_RATE)
     return float(hd_rate) if model == "GP3 HD" else RATE
 
 
-def model_from_product(product: str) -> str:
-    """The model named by the Open Gaze API's ``PRODUCT_ID`` (``GP3``,
-    ``GP3HD``)."""
-    return "GP3 HD" if "HD" in (product or "").upper() else "GP3"
+def model_name(model: str) -> str:
+    """brAIn dump's name for the tracker OpenGP3 calls ``model`` (``GP3``,
+    ``GP3 HD``, ``WEBCAM``, ``Simulated GP3``) or the Open Gaze API's
+    ``PRODUCT_ID`` names (``GP3``, ``GP3HD``, ``WEBCAM``)."""
+    text = (model or "").upper()
+    if "WEBCAM" in text:
+        return WEBCAM
+    if "SIMULATED" in text:
+        return "Simulated GP3"
+    return "GP3 HD" if "HD" in text else "GP3"
+
+
+model_from_product = model_name
 
 
 def calibration_points(n: int) -> list[tuple[float, float]]:
@@ -280,10 +296,13 @@ class Backend:
         self.on_error: Callable[[str], None] = lambda message: None
         self.screen = ScreenInfo()
         self.info: dict[str, str] = {}
-        #: The eye tracker's model ("GP3" or "GP3 HD") and frame rate, once
-        #: started.
+        #: The eye tracker's model ("GP3", "GP3 HD" or "Webcam") and frame
+        #: rate, once started.
         self.model = "GP3"
         self.rate = RATE
+        #: OpenGP3's warning when the data is degraded or not real (a
+        #: webcam, a simulated GP3), else "".
+        self.warning = ""
 
     def start(self) -> None:
         raise NotImplementedError
@@ -503,7 +522,27 @@ class LocalBackend(Backend):
         super().__init__(config)
         self.calibration_folder = Path(calibration_folder)
         self.tracker = None
+        self.camera = None
         self.saved_calibration: Optional[Path] = None
+
+    @property
+    def webcam(self) -> bool:
+        return self.config.tracker == "webcam"
+
+    def _open_camera(self):
+        """The chosen tracker's camera: the Gazepoint tracker on USB, never
+        a webcam in its place; or the chosen webcam (by default the one
+        OpenGP3 prefers, a built-in camera first)."""
+        cfg = self.config
+        if not self.webcam:
+            from opengp3.camera import open_camera
+            return open_camera(webcam_fallback=False)
+        from opengp3.webcam import open_webcam
+        index = None
+        if cfg.webcam_id:
+            from .video import resolve_camera
+            index = resolve_camera(0, cfg.webcam_id, cfg.webcam_name)
+        return open_webcam(index)
 
     def start(self):
         from opengp3 import Calibration, GazeTracker, Screen
@@ -514,7 +553,8 @@ class LocalBackend(Backend):
                                display=cfg.display)
         calibration = None
         path = self._calibration_path()
-        if path is not None and path.exists():
+        if path is not None and path.exists() and \
+                calibration_is_webcam(path) == self.webcam:
             try:
                 calibration = Calibration.load(str(path))
                 if (calibration.screen.width, calibration.screen.height) != \
@@ -522,15 +562,21 @@ class LocalBackend(Backend):
                     calibration = None  # made on another screen
             except Exception:  # noqa: BLE001
                 calibration = None
-        tracker = GazeTracker(
-            screen, calibration=calibration, smoothing=cfg.smoothing,
-            monocular=cfg.monocular or None, auto_gain=cfg.auto_gain,
-            input_monitor=False,
-            max_diagonal_in=cfg.max_diagonal_in or None,
-            rate_hz=cfg.hd_rate)
-        tracker.start()
-        self.tracker = tracker
-        self.model, self.rate = tracker.model, tracker.rate
+        camera = self._open_camera()
+        try:
+            tracker = GazeTracker(
+                screen, calibration=calibration, smoothing=cfg.smoothing,
+                camera=camera, monocular=cfg.monocular or None,
+                auto_gain=cfg.auto_gain, input_monitor=False,
+                max_diagonal_in=cfg.max_diagonal_in or None,
+                rate_hz=cfg.hd_rate)
+            tracker.start()
+        except BaseException:
+            camera.close()
+            raise
+        self.camera, self.tracker = camera, tracker
+        self.model, self.rate = model_name(tracker.model), tracker.rate
+        self.warning = tracker.warning or ""
         self.screen = ScreenInfo(screen.width, screen.height, screen.width_cm,
                                  screen.distance_cm)
         import opengp3
@@ -548,9 +594,13 @@ class LocalBackend(Backend):
 
     def stop(self):
         tracker, self.tracker = self.tracker, None
+        camera, self.camera = self.camera, None
         if tracker is not None:
             tracker.remove_callback(self._on_sample)
             tracker.stop()
+        if camera is not None:
+            # Opened here, so the tracker leaves it open.
+            camera.close()
 
     @property
     def calibrated(self):
@@ -603,11 +653,19 @@ class LocalBackend(Backend):
 
     def save_calibration(self, calibration) -> Path:
         self.calibration_folder.mkdir(parents=True, exist_ok=True)
+        prefix = "webcam" if self.webcam else "gp3"
         path = self.calibration_folder / \
-            f"gp3_{time.strftime('%Y%m%d_%H%M%S')}.json"
+            f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}.json"
         calibration.save(str(path))
         self.saved_calibration = path
         return path
+
+
+def calibration_is_webcam(path: Path) -> bool:
+    """Whether a calibration saved here was made with a webcam: a webcam's
+    gaze features are not a Gazepoint tracker's, so neither's calibration
+    fits the other."""
+    return Path(path).name.startswith("webcam_")
 
 
 class _LocalRun(CalibrationDriver):
@@ -769,7 +827,10 @@ class RemoteBackend(Backend):
                     return ["" for _ in keys]
             impl, version = get("API_ID", "IMPL", "VALUE")
             (serial,) = get("SERIAL_ID", "VALUE")
-            product, rate = get("PRODUCT_ID", "VALUE", "RATE")
+            # OpenGP3 0.5 adds WARNING when the data is degraded or not
+            # real (a webcam, a simulated GP3).
+            product, rate, warning = get("PRODUCT_ID", "VALUE", "RATE",
+                                         "WARNING")
             cw, ch = get("CAMERA_SIZE", "WIDTH", "HEIGHT")
             sw, sh = get("SCREEN_SIZE", "WIDTH", "HEIGHT")
             (delay,) = get("CALIBRATE_DELAY", "VALUE")
@@ -777,7 +838,8 @@ class RemoteBackend(Backend):
             valid = get("CALIBRATE_RESULT_SUMMARY", "VALID_POINTS")[0]
             self._calibrated = bool(valid and float(valid) > 0) \
                 if valid else None
-            self.model = model_from_product(product)
+            self.model = model_name(product)
+            self.warning = warning
             try:
                 self.rate = float(rate)
             except ValueError:

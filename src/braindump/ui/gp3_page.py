@@ -3,15 +3,16 @@ screen, the pupils over time, calibration with its quality, and the
 tracker's settings."""
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QComboBox, QGridLayout, QLabel, QMessageBox,
                                QPushButton, QVBoxLayout, QWidget)
 
-from ..devices.gp3 import COL, MODES, GP3Device
+from ..devices.gp3 import COL, MODES, TRACKERS, GP3Device
 from ..devices.gp3_backends import (CalibrationDriver, CalibrationFailed,
                                     CalibrationQuality, EyeView)
 from . import icons, theme
@@ -23,6 +24,10 @@ from .forms import ConfigForm, hint, panel, row
 POINTS = {5: "5 points", 9: "9 points", 13: "13 points", 16: "16 points",
           25: "25 points"}
 RATING = {"good": theme.GOOD, "fair": theme.WARNING, "poor": theme.BAD}
+
+
+class _Found(QObject):
+    found = Signal(object)
 
 
 def _displays() -> dict[int, str]:
@@ -135,6 +140,21 @@ class GP3Page(DevicePage):
                     "WinUSB, see OpenGP3). On another computer, it runs "
                     "opengp3 server or Gazepoint "
                     "Control, and brAIn dump reads it over the network.")
+        conn.choice("tracker", "Tracker", TRACKERS,
+                    "A webcam is OpenGP3's webcam eye tracking: about 2-5° "
+                    "accurate instead of the GP3's 0.5°, sensitive to head "
+                    "movement and light, and without pupil size. Its "
+                    "recordings say so.")
+        self.webcams = QComboBox()
+        self.webcams.setMinimumWidth(240)
+        self.webcams.setToolTip("The webcam to track the eyes with; kept by "
+                                "the system's identifier. Not one the Video "
+                                "Stream records.")
+        self.webcams.activated.connect(self._pick_webcam)
+        search = QPushButton("Search again")
+        search.clicked.connect(self._search_webcams)
+        self.webcam_row = row(self.webcams, search, None)
+        conn.form.addRow("Webcam", self.webcam_row)
         conn.boolean("simulate", "Simulated", "No hardware: a simulated "
                      "eye tracker")
         conn.line("host", "Server", "The computer serving the Open Gaze "
@@ -186,24 +206,81 @@ class GP3Page(DevicePage):
         for form in self.forms:
             form.changed.connect(self._changed)
         self.add_settings_tab(*self.forms)
+        self._show_webcams()
         self._mode_rows()
+        if cfg.tracker == "webcam":
+            self._search_webcams()
 
     def _mode_rows(self):
         conn, screen, tracking = self.forms
         cfg = self.device.config
         remote = cfg.mode == "remote" and not cfg.simulate
+        webcam = cfg.tracker == "webcam" and cfg.mode == "local" \
+            and not cfg.simulate
         for attr in ("host", "port", "remote_calibration_display",
                      "hide_remote_calibration"):
             conn.show_row(attr, remote)
+        conn.show_row("tracker", cfg.mode == "local" and not cfg.simulate)
+        conn.form.setRowVisible(self.webcam_row, webcam)
         screen.show_row("display", not remote)
         screen.show_row("max_diagonal_in", not remote)
         for attr in ("calibration_delay", "calibration_timeout", "hd_rate",
                      "monocular", "auto_gain", "smoothing"):
             tracking.show_row(attr, not remote)
+        for attr in ("hd_rate", "auto_gain"):
+            tracking.show_row(attr, not remote and not webcam)
+
+    # -- the webcam --------------------------------------------------------------
+
+    def _search_webcams(self):
+        from ..devices.video import find_cameras
+        relay = _Found(self)
+        relay.found.connect(self._show_webcams)
+        self._relay = relay
+
+        def work():
+            try:
+                result = find_cameras()
+            except Exception:  # noqa: BLE001
+                result = []
+            relay.found.emit(result)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_webcams(self, cameras=None) -> None:
+        """Automatic, then the cameras found, the chosen one selected by
+        its identifier (or named, when it is not connected)."""
+        cfg = self.device.config
+        combo = self.webcams
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("Automatic (a built-in camera first)", "")
+        current = 0
+        for camera in cameras or []:
+            combo.addItem(camera.name, camera)
+            if cfg.webcam_id and camera.id == cfg.webcam_id:
+                current = combo.count() - 1
+        if cfg.webcam_id and current == 0:
+            missing = "" if cameras is None else " (not connected)"
+            combo.addItem(f"{cfg.webcam_name or 'The chosen camera'}"
+                          f"{missing}", None)
+            current = combo.count() - 1
+        combo.setCurrentIndex(current)
+        combo.blockSignals(False)
+
+    def _pick_webcam(self, i: int):
+        camera = self.webcams.itemData(i)
+        if camera is None:
+            return
+        cfg = self.device.config
+        cfg.webcam_id, cfg.webcam_name = (camera.id, camera.name) \
+            if camera else ("", "")
+        self.config_changed.emit()
 
     def _changed(self, attr: str):
-        if attr in ("mode", "simulate"):
+        if attr in ("mode", "simulate", "tracker"):
             self._mode_rows()
+        if attr == "tracker" and self.device.config.tracker == "webcam":
+            self._search_webcams()
         if attr == "mirror_view":
             self.eyes.mirror = self.device.config.mirror_view
         self.config_changed.emit()
@@ -242,7 +319,13 @@ class GP3Page(DevicePage):
         else:
             where = (f"{backend.model}, {backend.rate:g} Hz, on this "
                      "computer." if running and backend else
+                     "A webcam on this computer (low accuracy)."
+                     if cfg.tracker == "webcam" else
                      "GP3 or GP3 HD on this computer.")
+        if running and backend is not None and backend.warning \
+                and not d.simulated:
+            where += (f"<br><span style='color:{theme.BAD}'><b>Low accuracy."
+                      f"</b> {backend.warning}</span>")
         if running and backend is not None and backend.calibrated is False:
             where += f" <span style='color:{theme.WARNING}'>Not calibrated." \
                      "</span>"
@@ -411,6 +494,9 @@ class GP3Page(DevicePage):
             else theme.MUTED
         text = {True: "GP3 calibrated", False: "GP3 not calibrated",
                 None: "GP3 calibration unknown"}[cal]
+        if backend is not None and backend.warning and not d.simulated:
+            colour = theme.BAD
+            text += f". {backend.warning}"
         return [(icons.eye(colour), text)]
 
     def shown(self):

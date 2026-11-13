@@ -29,8 +29,8 @@ from .base import (IDLE, RUNNING, STARTING, STOPPING, Device, DeviceConfig,
                    RecordedFiles, RecordingTarget, Timeline,
                    start_time)
 from .gp3_backends import (CHANNELS, DESCRIPTIONS, INDEX, MODELS, UNITS,
-                           nominal_rate, Backend, CalibrationQuality, LocalBackend,
-                           RemoteBackend, SimulatedBackend)
+                           WEBCAM, nominal_rate, Backend, CalibrationQuality,
+                           LocalBackend, RemoteBackend, SimulatedBackend)
 
 PORT_OUT = Constants.Defaults.PORT_OUT
 #: The pipeline's channels: seconds since the source started, then the
@@ -43,6 +43,9 @@ DATATYPE = "beh"
 
 MODES = {"local": "On this computer (OpenGP3 driver)",
          "remote": "On another computer (Open Gaze API)"}
+#: What tracks the eyes on this computer.
+TRACKERS = {"gazepoint": "Gazepoint GP3 or GP3 HD",
+            "webcam": "Webcam (low accuracy)"}
 
 
 @dataclass
@@ -50,6 +53,13 @@ class GP3Config(DeviceConfig):
     #: "local" or "remote".
     mode: str = "local"
     simulate: bool = False
+    #: On this computer: "gazepoint" (the GP3 or GP3 HD on USB) or
+    #: "webcam" (OpenGP3's webcam eye tracking, 2-5° instead of 0.5°).
+    tracker: str = "gazepoint"
+    #: The webcam, by the system's identifier (as the Video Stream keeps
+    #: it), and its name; empty lets OpenGP3 choose, a built-in one first.
+    webcam_id: str = ""
+    webcam_name: str = ""
     # remote
     host: str = "127.0.0.1"
     port: int = 4242
@@ -76,9 +86,11 @@ class GP3Config(DeviceConfig):
     smoothing: bool = True
     #: The GP3 HD's frame rate, 150 or 60 Hz (the GP3 runs at 60 Hz).
     hd_rate: int = 150
-    #: The model last connected ("GP3" or "GP3 HD"): the session pipeline
-    #: is laid out for its frame rate before the tracker is opened.
+    #: The model last connected ("GP3", "GP3 HD" or "Webcam"), and a
+    #: webcam's frame rate: the session pipeline is laid out for its frame
+    #: rate before the tracker is opened.
     model: str = "GP3"
+    webcam_rate: float = 30.0
     # the view
     mirror_view: bool = True
     #: The last calibration made here (local mode), relative to the
@@ -237,8 +249,8 @@ class GP3Device(Device):
     NAME = "Gazepoint GP3"
     MANUFACTURER = "Gazepoint"
     MODEL = "GP3"
-    DESCRIPTION = "Eye tracker (GP3 60 Hz, GP3 HD 150 Hz), on this " \
-                  "computer or over the Open Gaze API (OpenGP3)"
+    DESCRIPTION = "Eye tracker (GP3 60 Hz, GP3 HD 150 Hz, or a webcam), " \
+                  "on this computer or over the Open Gaze API (OpenGP3)"
     MODALITY = "eyetrack"
     CONFIG = GP3Config
 
@@ -269,7 +281,13 @@ class GP3Device(Device):
         cfg = self.config
         model = cfg.model if cfg.model in MODELS and not self.simulated \
             else "GP3"
-        source = GazeSource(nominal_rate(model, cfg.hd_rate),
+        if cfg.mode == "local" and not self.simulated:
+            # The tracker chosen since may not be the one last connected.
+            if cfg.tracker == "webcam":
+                model = WEBCAM
+            elif model == WEBCAM:
+                model = "GP3"
+        source = GazeSource(nominal_rate(model, cfg.hd_rate, cfg.webcam_rate),
                             name=self.node_name("source"))
         tap = SweepTap(seconds=10, name=self.node_name("view"))
         writer = EyetrackWriter(self.node_name("bids"))
@@ -287,6 +305,8 @@ class GP3Device(Device):
         if not self.simulated:
             # The next connection lays its pipeline out for this model.
             self.config.model = backend.model
+            if backend.model == WEBCAM:
+                self.config.webcam_rate = float(backend.rate)
 
     def closing(self) -> None:
         backend, self.backend = self.backend, None
@@ -361,6 +381,7 @@ class GP3Device(Device):
             info = dict(backend.info) if backend else {}
             if backend is not None:
                 info["model"], info["rate"] = backend.model, backend.rate
+                info["warning"] = backend.warning
             kind = backend.kind if backend else ""
 
         def finalize(reference: Optional[Timeline]) -> None:
@@ -398,20 +419,27 @@ class GP3Device(Device):
         if info.get("software"):
             software.append(info["software"])
         model = info.get("model") or self.MODEL
+        webcam = model == WEBCAM
+        setup = {"local": f"{model} on the recording computer "
+                          + ("(OpenGP3 webcam eye tracking, MediaPipe face "
+                             "landmarks)" if webcam else "(OpenGP3 driver)"),
+                 "remote": f"{model} served over the Open Gaze API by "
+                           f"{info.get('server', '')}",
+                 "simulated": "simulated GP3"}.get(kind, kind)
+        if info.get("warning"):
+            # OpenGP3's own words: a webcam's (or a simulated tracker's)
+            # data must not pass for a Gazepoint tracker's.
+            setup += f". WARNING: {info['warning']}"
         common = {
             "SamplingFrequency": info.get("rate") or nominal_rate(model),
             "StartTime": round(start, 6),
-            "Manufacturer": self.MANUFACTURER,
+            "Manufacturer": NA if webcam else self.MANUFACTURER,
             "ManufacturersModelName": model,
             "DeviceSerialNumber": info.get("serial") or NA,
             "SoftwareVersions": ", ".join(software),
             "TaskName": target.entities.task,
             "RecordingDuration": round(duration, 3),
-            "TrackerSetup": {"local": f"{model} on the recording computer "
-                                      "(OpenGP3 driver)",
-                             "remote": f"{model} served over the Open Gaze "
-                                       f"API by {info.get('server', '')}",
-                             "simulated": "simulated GP3"}.get(kind, kind),
+            "TrackerSetup": setup,
             "SimulatedDevice": self.simulated,
             **target.common_metadata,
         }

@@ -9,7 +9,9 @@ Windows, macOS and Linux:
   through g.Pype's GHIamp source and g.tec's gtec-gds driver;
 - **Gazepoint GP3 and GP3 HD**: eye tracking (60 Hz; the GP3 HD at 150 or
   60 Hz), through [OpenGP3](https://github.com/itubrainlab/opengp3), on this
-  computer or on another one over the Open Gaze API;
+  computer or on another one over the Open Gaze API. Without one, a webcam
+  through OpenGP3's webcam eye tracking: far less accurate (2–5° instead of
+  0.5°, no pupil size), and the recordings say so;
 - **Polar H10**: ECG, heart rate and RR intervals;
 - **Shimmer3 GSR+**: skin conductance and pulse (PPG);
 - **LSL streams**: markers from any Lab Streaming Layer stream, as events;
@@ -74,7 +76,10 @@ rest of brAIn dump does without it.
 - **GP3**: an eye view (camera image locally, pupil positions remotely),
   distance feedback, calibration (5/9/13/16/25 points, full-screen targets
   here or on the tracker computer), validation (local), and a plot of the
-  calibration quality.
+  calibration quality. On this computer, the tracker is the GP3 (or GP3 HD)
+  or, when chosen, a webcam: brAIn dump never falls back to one by itself.
+  A webcam's warning, or a remote OpenGP3's, shows on the page and goes
+  into the recording's `TrackerSetup`.
 - **Polar H10** (Bluetooth LE, via bleak): the raw ECG at 130 Hz, optionally
   the accelerometer, and the heart rate with every RR interval. BIDS physio
   `recording-ecg` (`cardiac`, µV) and `recording-accel`, with each beat in
@@ -150,6 +155,7 @@ the synchronisation of EEG, markers, eyes and the screen (OBS).
 | g.HIamp | USB, gtec-gds driver | USB, gtec-gds driver | USB, gtec-gds driver |
 | GP3 / GP3 HD, this computer | [UsbDk](https://github.com/daynix/UsbDk/releases), installed once (or WinUSB via [Zadig](https://zadig.akeo.ie)) | nothing | a USB rule, installed once (asks for the password) |
 | GP3 / GP3 HD, remote | nothing | nothing | nothing |
+| Webcam eye tracking | nothing (downloads a 4 MB face model once) | camera access, asked once | nothing (V4L2) |
 | Polar H10 | Bluetooth LE | Bluetooth LE | Bluetooth LE (BlueZ) |
 | Shimmer3 GSR+ | pair it; its outgoing COM port | pair it; `/dev/cu.Shimmer3-…` | pair it and `rfcomm bind`; `/dev/rfcomm0` |
 | LSL | nothing | nothing | nothing |

@@ -15,7 +15,8 @@ class FakeServer:
     calibration the way Gazepoint Control does."""
 
     def __init__(self, product=None):
-        #: PRODUCT_ID's answer, e.g. ("GP3HD", "150"); None leaves it out.
+        #: PRODUCT_ID's answer, e.g. ("GP3HD", "150"), with OpenGP3's
+        #: warning third if any; None leaves it out.
         self.product = product
         self.sock = socket.socket()
         self.sock.bind(("127.0.0.1", 0))
@@ -63,7 +64,8 @@ class FakeServer:
                  }.get(ident, [])
         if ident == "PRODUCT_ID" and self.product:
             extra = [("VALUE", self.product[0]), ("BUS", "USB3"),
-                     ("RATE", self.product[1])]
+                     ("RATE", self.product[1]),
+                     *[("WARNING", w) for w in self.product[2:]]]
         if ident == "ENABLE_SEND_DATA":
             self.sending = a.get("STATE") == "1"
         self._send(element("ACK", [("ID", ident), *extra]))
@@ -151,6 +153,19 @@ def test_remote_gp3_hd_is_recognised():
     try:
         assert (backend.model, backend.rate) == ("GP3 HD", 150.0)
         assert backend.info["product"] == "GP3HD"
+        assert backend.warning == ""
+    finally:
+        backend.stop()
+
+
+def test_remote_webcam_is_recognised_and_its_warning_kept():
+    # OpenGP3 0.5 serving its webcam eye tracking.
+    server = FakeServer(product=("WEBCAM", "30", "NO GAZEPOINT EYE TRACKER"))
+    backend = RemoteBackend(GP3Config(mode="remote", port=server.port))
+    backend.start()
+    try:
+        assert (backend.model, backend.rate) == ("Webcam", 30.0)
+        assert backend.warning == "NO GAZEPOINT EYE TRACKER"
     finally:
         backend.stop()
 
@@ -159,6 +174,9 @@ def test_models_and_rates():
     assert model_from_product("GP3") == "GP3"
     assert model_from_product("GP3HD") == "GP3 HD"
     assert model_from_product("") == "GP3"
+    assert model_from_product("WEBCAM") == "Webcam"
+    assert model_from_product("Simulated GP3") == "Simulated GP3"
+    assert nominal_rate("Webcam", 150, 25) == 25.0
     assert nominal_rate("GP3", 150) == 60.0
     assert nominal_rate("GP3 HD", 150) == 150.0
     assert nominal_rate("GP3 HD", 60) == 60.0

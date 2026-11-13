@@ -30,6 +30,7 @@ for name, check in (
         ("gtec_unicorn", lambda m: m.__version__),
         ("gtec_gds", lambda m: "ok"),
         ("opengp3", lambda m: m.__version__),
+        ("mediapipe", lambda m: m.__version__),
         ("libusb_package", lambda m: m.get_library_path()),
         ("pylsl", lambda m: m.library_version()),
         ("bleak", lambda m: "ok"),
