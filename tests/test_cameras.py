@@ -3,9 +3,9 @@ choice kept by the camera's identifier, and the page showing it."""
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from braindump.devices import make_device, video
-from braindump.devices.video import Camera, opencv_indices
-from braindump.project import Project
+from brainstream.devices import make_device, video
+from brainstream.devices.video import Camera, opencv_indices
+from brainstream.project import Project
 
 #: Qt's camera list on a MacBook, in the system's order: the identifiers
 #: are AVFoundation's unique IDs.
@@ -50,8 +50,8 @@ def test_the_chosen_camera_is_found_again_by_its_id(monkeypatch):
 
 
 def test_the_page_shows_and_stores_the_chosen_camera(tmp_path, monkeypatch):
-    from braindump.ui import video_page
-    from braindump.ui.video_page import VideoPage
+    from brainstream.ui import video_page
+    from brainstream.ui.video_page import VideoPage
     monkeypatch.setattr(video_page, "find_cameras", lambda: _cameras(MAC))
     app = QApplication.instance() or QApplication([])
     project = Project.create(tmp_path / "p", "P")

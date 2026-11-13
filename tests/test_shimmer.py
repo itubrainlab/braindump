@@ -7,10 +7,10 @@ import time
 import numpy as np
 import pytest
 
-from braindump.devices import make_device
-from braindump.devices import shimmer as sh
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.devices import make_device
+from brainstream.devices import shimmer as sh
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 def _raw(band, kohm):
@@ -58,7 +58,7 @@ def test_port_choice(monkeypatch):
 
 
 def test_link_with_a_fake_unit(monkeypatch):
-    """The calls brAIn dump makes on pyshimmer, and what it does with the
+    """The calls brAIn stream makes on pyshimmer, and what it does with the
     packets."""
     pyshimmer = pytest.importorskip("pyshimmer")
     from pyshimmer import EChannelType

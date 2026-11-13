@@ -1,19 +1,19 @@
-# Install brAIn dump for the current user: copies this folder to
-# %LOCALAPPDATA%\brAIn dump\app, adds a Start menu shortcut with the icon,
+# Install brAIn stream for the current user: copies this folder to
+# %LOCALAPPDATA%\brAIn stream\app, adds a Start menu shortcut with the icon,
 # then sets it up (downloads g.Pype and the libraries from PyPI). No
 # administrator rights needed. Started by install.cmd.
 $ErrorActionPreference = 'Stop'
 
 if (-not [Environment]::Is64BitOperatingSystem) {
-    throw 'brAIn dump needs 64-bit Windows.'
+    throw 'brAIn stream needs 64-bit Windows.'
 }
 
 $here = $PSScriptRoot
-$data = Join-Path $env:LOCALAPPDATA 'brAIn dump'
+$data = Join-Path $env:LOCALAPPDATA 'brAIn stream'
 $app = Join-Path $data 'app'
 
 if ($here.TrimEnd('\') -ne $app) {
-    Write-Host "Copying brAIn dump to $app"
+    Write-Host "Copying brAIn stream to $app"
     if (Test-Path $app) { Remove-Item -Recurse -Force $app }
     New-Item -ItemType Directory -Force -Path $app | Out-Null
     Copy-Item -Recurse -Force (Join-Path $here '*') $app
@@ -24,11 +24,11 @@ Get-ChildItem -Recurse -File $app | Unblock-File
 
 $programs = [Environment]::GetFolderPath('Programs')
 $link = (New-Object -ComObject WScript.Shell).CreateShortcut(
-    (Join-Path $programs 'brAIn dump.lnk'))
+    (Join-Path $programs 'brAIn stream.lnk'))
 $link.TargetPath = Join-Path $app 'python\pythonw.exe'
 $link.Arguments = '-I "' + (Join-Path $app 'launcher.py') + '"'
 $link.WorkingDirectory = $app
-$link.IconLocation = Join-Path $app 'braindump.ico'
+$link.IconLocation = Join-Path $app 'brainstream.ico'
 $link.Description = 'Record EEG, eye tracking, ECG, GSR and LSL streams into BIDS'
 $link.Save()
 
@@ -41,4 +41,4 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host ''
-Write-Host 'brAIn dump is installed: open it from the Start menu.'
+Write-Host 'brAIn stream is installed: open it from the Start menu.'

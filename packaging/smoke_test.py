@@ -17,12 +17,12 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 EXPECTED = sys.argv[2]
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
-os.environ["BRAINDUMP_HOME"] = tempfile.mkdtemp()
+os.environ["BRAINSTREAM_HOME"] = tempfile.mkdtemp()
 
-import braindump  # noqa: E402
+import brainstream  # noqa: E402
 import gpype  # noqa: E402
 
-assert braindump.__version__ == EXPECTED, braindump.__version__
+assert brainstream.__version__ == EXPECTED, brainstream.__version__
 
 # Every driver loads on this system.
 drivers = {}
@@ -43,19 +43,19 @@ for name, check in (
         drivers[name] = check(module)
     except Exception as error:  # noqa: BLE001
         sys.exit(f"{name} does not load: {type(error).__name__}: {error}")
-print(f"brAIn dump {braindump.__version__}, g.Pype {gpype.__version__}, "
+print(f"brAIn stream {brainstream.__version__}, g.Pype {gpype.__version__}, "
       f"Python {sys.version.split()[0]} on {sys.platform}", flush=True)
 for name, value in drivers.items():
     print(f"  {name}: {value}", flush=True)
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from braindump.devices import DEVICE_TYPES, make_device  # noqa: E402
-from braindump.pipeline import SessionPipeline  # noqa: E402
-from braindump.project import Project  # noqa: E402
-from braindump.recording import Session, Subject  # noqa: E402
-from braindump.ui import theme  # noqa: E402
-from braindump.ui.main_window import MainWindow  # noqa: E402
+from brainstream.devices import DEVICE_TYPES, make_device  # noqa: E402
+from brainstream.pipeline import SessionPipeline  # noqa: E402
+from brainstream.project import Project  # noqa: E402
+from brainstream.recording import Session, Subject  # noqa: E402
+from brainstream.ui import theme  # noqa: E402
+from brainstream.ui.main_window import MainWindow  # noqa: E402
 
 folder = Path(tempfile.mkdtemp())
 project = Project.create(folder / "smoke", "Smoke test")

@@ -13,10 +13,10 @@ import time
 import pytest
 
 from conftest import connect_all
-from braindump.devices import make_device
-from braindump.devices.hiamp import _simulated_filters, amplifier_filter
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.devices import make_device
+from brainstream.devices.hiamp import _simulated_filters, amplifier_filter
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 VALIDATOR = (os.environ.get("BIDS_VALIDATOR")
              or shutil.which("bids-validator-deno")

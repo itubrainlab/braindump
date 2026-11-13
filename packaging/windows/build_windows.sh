@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build the Windows x86_64 package: dist/brAIndump-<version>-windows-x86_64.zip
+# Build the Windows x86_64 package: dist/brAInstream-<version>-windows-x86_64.zip
 #
 #     packaging/windows/build_windows.sh
 #
@@ -7,7 +7,7 @@
 # git and the project's .venv (pip install -e ".[test,shimmer]").
 #
 # The package carries its own Python (python-build-standalone's Windows
-# build, which uv downloads) and the wheels of brAIn dump
+# build, which uv downloads) and the wheels of brAIn stream
 # and OpenGP3; see ../common.sh.
 set -euo pipefail
 
@@ -22,9 +22,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 source "$HERE/../common.sh"
 BUILD_ID="$VERSION-$COMMIT-windows-x86_64"
-NAME="brAIndump-$VERSION-windows-x86_64"
+NAME="brAInstream-$VERSION-windows-x86_64"
 DIR="$WORK/$NAME"
-echo "Building brAIn dump $BUILD_ID"
+echo "Building brAIn stream $BUILD_ID"
 
 uv python install --quiet --install-dir "$WORK/py" cpython-3.12-windows-x86_64-none
 PYTHON_HOME="$(find "$WORK/py" -maxdepth 1 -type d -name 'cpython-3.12.*-windows-x86_64-none' | head -1)"
@@ -43,10 +43,10 @@ cp "$WORK"/wheels/*.whl "$DIR/wheels/"
 cp "$WORK/requirements.txt" "$DIR/requirements.txt"
 cp "$HERE/../bootstrap.py" "$HERE/launcher.py" "$DIR/"
 cp "$HERE/install.cmd" "$HERE/install.ps1" "$HERE/uninstall.cmd" \
-    "$HERE/uninstall.ps1" "$HERE/brAIn dump.cmd" "$HERE/README.txt" "$DIR/"
+    "$HERE/uninstall.ps1" "$HERE/brAIn stream.cmd" "$HERE/README.txt" "$DIR/"
 cp "$ROOT/LICENSE" "$DIR/"
 echo "$BUILD_ID" > "$DIR/build-id"
-render_icon "$DIR/braindump.ico" 256 ICO
+render_icon "$DIR/brainstream.ico" 256 ICO
 
 mkdir -p "$OUT"
 ZIP="$OUT/$NAME.zip"

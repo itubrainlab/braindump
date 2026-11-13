@@ -8,10 +8,10 @@ import numpy as np
 import pyedflib
 
 from conftest import connect_all
-from braindump.bids import read_tsv
-from braindump.devices import make_device
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.bids import read_tsv
+from brainstream.devices import make_device
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 @pytest.mark.slow

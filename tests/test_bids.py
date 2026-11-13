@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from braindump.bids import Dataset, Entities, clean_label, read_tsv
+from brainstream.bids import Dataset, Entities, clean_label, read_tsv
 
 
 def test_entities():

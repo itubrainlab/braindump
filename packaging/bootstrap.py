@@ -1,9 +1,9 @@
-"""First-launch setup of the brAIn dump app (macOS, Linux and Windows).
+"""First-launch setup of the brAIn stream app (macOS, Linux and Windows).
 
     bootstrap.py <app resources folder> <library folder>
 
 Installs the pinned libraries (requirements.txt: g.Pype, PySide6, ...)
-from PyPI, then the bundled wheels (brAIn dump,
+from PyPI, then the bundled wheels (brAIn stream,
 OpenGP3), into the library folder. A small window shows progress; without a
 display, progress goes to the terminal. The folder is
 named after the build, so an updated app sets up a fresh one; older
@@ -48,12 +48,12 @@ def install(report) -> None:
     RUNTIME.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(LIB, ignore_errors=True)
     with open(LOG, "w", encoding="utf-8") as log:
-        report("Downloading g.Pype and the libraries brAIn dump needs "
+        report("Downloading g.Pype and the libraries brAIn stream needs "
                "(first launch only)...")
         for line in pip(log, "-r", str(RES / "requirements.txt")):
             if line.startswith(("Collecting", "Downloading", "Installing")):
                 report(line[:90])
-        report("Installing brAIn dump...")
+        report("Installing brAIn stream...")
         wheels = sorted(str(p) for p in (RES / "wheels").glob("*.whl"))
         for line in pip(log, "--no-deps", *wheels):
             pass
@@ -68,7 +68,7 @@ def install_in_terminal() -> int:
     there is one, to the desktop's notifications."""
     notify = shutil.which("notify-send")
     if notify:
-        subprocess.run([notify, "brAIn dump", "Setting up on first "
+        subprocess.run([notify, "brAIn stream", "Setting up on first "
                         "launch; this takes a few minutes."], check=False)
     try:
         # pythonw.exe (Windows) has no console to print to.
@@ -78,7 +78,7 @@ def install_in_terminal() -> int:
         if sys.stderr:
             print(f"Setup failed: {error}. See {LOG}", file=sys.stderr)
         if notify:
-            subprocess.run([notify, "brAIn dump",
+            subprocess.run([notify, "brAIn stream",
                             f"Setup failed. See {LOG}"], check=False)
         return 1
 
@@ -91,11 +91,11 @@ def main() -> int:
     except Exception:  # no Tk, or no display
         return install_in_terminal()
 
-    root.title("brAIn dump")
+    root.title("brAIn stream")
     root.resizable(False, False)
     frame = ttk.Frame(root, padding=20)
     frame.pack()
-    ttk.Label(frame, text="Setting up brAIn dump",
+    ttk.Label(frame, text="Setting up brAIn stream",
               font=("Helvetica", 15, "bold")).pack(anchor="w")
     status = tk.StringVar(value="Starting...")
     ttk.Label(frame, textvariable=status, width=70).pack(anchor="w",
@@ -129,9 +129,9 @@ def main() -> int:
                     status.set(value)
                 elif kind == "error":
                     messagebox.showerror(
-                        "brAIn dump",
+                        "brAIn stream",
                         f"Setting up failed: {value}\n\nCheck the internet "
-                        f"connection and open brAIn dump again. "
+                        f"connection and open brAIn stream again. "
                         f"Details: {LOG}")
                 elif kind == "done":
                     root.destroy()

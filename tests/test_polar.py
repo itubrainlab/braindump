@@ -7,11 +7,11 @@ import time
 import pytest
 import numpy as np
 
-from braindump.devices import make_device
-from braindump.devices.polar import (ACC, ECG, BeatClock, acc_start,
-                                     ecg_start, parse_heart_rate, parse_pmd)
-from braindump.project import Project
-from braindump.recording import Session, Subject
+from brainstream.devices import make_device
+from brainstream.devices.polar import (ACC, ECG, BeatClock, acc_start,
+                                       ecg_start, parse_heart_rate, parse_pmd)
+from brainstream.project import Project
+from brainstream.recording import Session, Subject
 
 
 def _frame(kind, frame_type, stamp_ns, values, width):

@@ -2,10 +2,10 @@ import json
 
 import pytest
 
-from braindump import project as proj
-from braindump.devices import DEVICE_TYPES, make_device
-from braindump.devices.gp3 import GP3Config
-from braindump.devices.unicorn import UnicornConfig
+from brainstream import project as proj
+from brainstream.devices import DEVICE_TYPES, make_device
+from brainstream.devices.gp3 import GP3Config
+from brainstream.devices.unicorn import UnicornConfig
 
 
 def test_create_load_roundtrip(tmp_path):
@@ -57,3 +57,31 @@ def test_registry():
     assert DEVICE_TYPES["webcam"].NAME == "Video Stream"
     saved = json.loads(json.dumps(UnicornConfig().to_dict()))
     assert UnicornConfig.from_dict(saved) == UnicornConfig()
+
+
+def test_settings_from_before_the_rename_are_kept(tmp_path, monkeypatch):
+    """brAIn stream was brAIn dump: its settings folder is moved to the new
+    name the first time, and BRAINDUMP_HOME still works."""
+    from brainstream import paths
+    monkeypatch.delenv("BRAINSTREAM_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / ".config"))
+    old = paths._system_dir("brAIn dump", "braindump")
+    old.mkdir(parents=True)
+    (old / "recent.json").write_text("[]")
+    new = paths.config_dir()
+    assert new == paths._system_dir("brAIn stream", "brainstream")
+    assert (new / "recent.json").read_text() == "[]" and not old.exists()
+    monkeypatch.setenv("BRAINDUMP_HOME", str(tmp_path / "custom"))
+    assert paths.config_dir() == tmp_path / "custom"
+
+
+def test_projects_from_before_the_rename_open(tmp_path):
+    project = proj.Project.create(tmp_path / "p", "Old")
+    old = project.path.with_suffix(".braindump")
+    project.path.rename(old)
+    loaded = proj.Project.load(old)
+    assert loaded.name == "Old" and loaded.path == old
+    loaded.save()
+    assert old.exists()

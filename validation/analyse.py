@@ -1,5 +1,5 @@
 """Check a validation recording (validation/face_validation.py) made with
-brAIn dump: are the signals right, and are they in step?
+brAIn stream: are the signals right, and are they in step?
 
     python validation/analyse.py <BIDS folder> --sub 01 [--ses 1]
         [--task facevalidation] [--run 1] [--out report_folder]
@@ -39,7 +39,7 @@ Five checks, each passed or failed against the criteria below, written to
      shows, the flashes within 60 ms of their markers;
    - every recording covers the whole procedure.
 
-Times are compared on the EEG's timeline: brAIn dump gives event onsets
+Times are compared on the EEG's timeline: brAIn stream gives event onsets
 and every recording's StartTime in it (eeg.json, RecordingTiming).
 """
 from __future__ import annotations
@@ -56,7 +56,10 @@ from typing import Optional
 import numpy as np
 from scipy import signal, stats
 
-MARKER_SOURCE = "lsl:brAIndumpValidation"
+MARKER_SOURCE = "lsl:brAInstreamValidation"
+#: The marker stream as the procedure called it before the rename (brAIn
+#: dump): those recordings are read too.
+MARKER_SOURCES = (MARKER_SOURCE, "lsl:brAIndumpValidation")
 ALPHA = (8.0, 13.0)
 #: Electrodes where each effect is looked for, in order of preference.
 POSTERIOR = ("Oz", "O1", "O2", "PO7", "PO8", "POz", "Pz", "P7", "P8")
@@ -167,7 +170,7 @@ def load(root: Path, sub: str, ses: str = "", task: str = "facevalidation",
         for path in sorted(folder.glob(f"{pattern}*_events.tsv")):
             rows = _tsv(path)
             return [Marker(float(r["onset"]), r.get("value", ""))
-                    for r in rows if r.get("source") == MARKER_SOURCE]
+                    for r in rows if r.get("source") in MARKER_SOURCES]
         return []
     rec.markers = markers(eeg_dir) or markers(beh_dir)
     rec.beh_markers = markers(beh_dir)
@@ -989,7 +992,7 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
         if med > 50 and iqr < 50:
             c.lines.append(f"  The delay is steady: it is OBS's capture and "
                            f"output. Set the Screen Capture's Delay to "
-                           f"{med:.0f} ms in brAIn dump, and its frames are "
+                           f"{med:.0f} ms in brAIn stream, and its frames are "
                            f"placed when they were on screen.")
         if plt is not None:
             fig, ax = plt.subplots(figsize=(6, 3))
@@ -1043,8 +1046,9 @@ def check_sync(rec: Recording, plt=None, out: Path = None) -> Check:
                            f"frames; pass: within 60 ms, IQR < 100 ms)")
             if abs(lag) > 0.02 and iqr < 0.1:
                 c.lines.append(f"  Steady: add {lag * 1000:.0f} ms to the "
-                               f"Video Stream's Delay in brAIn dump, and its "
-                               f"frames are placed when they were taken.")
+                               f"Video Stream's Delay in brAIn stream, and "
+                               f"its frames are placed when they were "
+                               f"taken.")
             elif iqr >= 0.1:
                 c.lines.append("  Uneven: the camera's frames arrive with a "
                                "varying delay (a camera that buffers frames, "
@@ -1179,7 +1183,7 @@ def _verdict(check) -> str:
 
 
 def _write_report(path: Path, rec: Recording, checks: list[Check]) -> None:
-    lines = [f"# brAIn dump validation: {rec.stem}", ""]
+    lines = [f"# brAIn stream validation: {rec.stem}", ""]
     lines += [f"> {note}" for note in rec.notes]
     lines += ["", "| Check | Result |", "|---|---|"]
     lines += [f"| {c.name} | **{_verdict(c)}** |" for c in checks

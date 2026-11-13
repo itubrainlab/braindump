@@ -1,12 +1,12 @@
-"""Start brAIn dump from its unpacked (or installed) folder, Windows.
+"""Start brAIn stream from its unpacked (or installed) folder, Windows.
 
-    pythonw.exe -I launcher.py [braindump options]
+    pythonw.exe -I launcher.py [brainstream options]
 
-The folder carries its own Python and the wheels of brAIn dump and
+The folder carries its own Python and the wheels of brAIn stream and
 OpenGP3, but not g.Pype or g.tec's gtec-unicorn driver: their
 licences do not allow them in a bundle. On first launch, and after an
 update, bootstrap.py installs them and the other libraries from PyPI into
-%LOCALAPPDATA%\\brAIn dump\\runtime.
+%LOCALAPPDATA%\\brAIn stream\\runtime.
 """
 import os
 import subprocess
@@ -16,7 +16,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 BUILD = (HERE / "build-id").read_text().strip()
 LIB = (Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-       / "brAIn dump" / "runtime" / BUILD)
+       / "brAIn stream" / "runtime" / BUILD)
 
 if not (LIB / ".complete").exists():
     setup = subprocess.run([sys.executable, "-I", str(HERE / "bootstrap.py"),
@@ -25,7 +25,7 @@ if not (LIB / ".complete").exists():
         sys.exit(1)
 
 sys.path.insert(0, str(LIB))
-sys.argv[0] = "braindump"
-from braindump.app import main  # noqa: E402
+sys.argv[0] = "brainstream"
+from brainstream.app import main  # noqa: E402
 
 sys.exit(main())

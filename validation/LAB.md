@@ -19,7 +19,7 @@ The analysis then gives each check PASS or FAIL.
 ```
  STIMULUS COMPUTER                          RECORDING COMPUTER
  ┌──────────────────────────┐   network    ┌──────────────────────────┐
- │ PsychoPy  (procedure,    │── LSL ──────▶│ brAIn dump               │
+ │ PsychoPy  (procedure,    │── LSL ──────▶│ brAIn stream               │
  │           LSL markers,   │              │  ├ g.HIamp (USB)         │
  │           GP3 calibration)│              │  │   64 ch, 64 = HEOG    │
  │ opengp3 server ◀ GP3 HD  │── Open Gaze ▶│  ├ GP3 (remote)          │
@@ -32,10 +32,10 @@ The analysis then gives each check PASS or FAIL.
 | Device | Where | Settings |
 |---|---|---|
 | g.HIamp | recording computer, USB | 64 channels at 512 Hz. Channels 1–63 EEG, channel 64 bipolar (horizontal EOG). Amplifier filters 0.01–100 Hz band-pass and 50 Hz notch |
-| GP3 HD | stimulus computer, USB, under `opengp3 server` | read by brAIn dump over the network (Open Gaze API, port 4242). PsychoPy runs its calibration on the same server |
-| OBS | stimulus computer: Display Capture of the participant's screen, NDI output (DistroAV) | received by brAIn dump's Screen Capture over the network |
-| Camera | recording computer, USB, pointed at the participant | brAIn dump's Video Stream, recording as `recording-camera` |
-| PsychoPy | stimulus computer | sends the markers over LSL (stream `brAIndumpValidation`) |
+| GP3 HD | stimulus computer, USB, under `opengp3 server` | read by brAIn stream over the network (Open Gaze API, port 4242). PsychoPy runs its calibration on the same server |
+| OBS | stimulus computer: Display Capture of the participant's screen, NDI output (DistroAV) | received by brAIn stream's Screen Capture over the network |
+| Camera | recording computer, USB, pointed at the participant | brAIn stream's Video Stream, recording as `recording-camera` |
+| PsychoPy | stimulus computer | sends the markers over LSL (stream `brAInstreamValidation`) |
 
 Both computers must be on the same wired network, with LSL, NDI and port
 4242 allowed through their firewalls. Use wired Ethernet: Wi-Fi makes NDI's
@@ -45,13 +45,13 @@ and the eye tracker's delays uneven.
 
 ### Recording computer
 
-1. **brAIn dump from source**, with the analysis's figures:
+1. **brAIn stream from source**, with the analysis's figures:
 
    ```bash
    pip install -e ".[validation]"
    ```
 
-2. **g.tec's driver.** brAIn dump installs gtec-gds. On Windows, also
+2. **g.tec's driver.** brAIn stream installs gtec-gds. On Windows, also
    install g.tec's g.HIamp driver (g.NEEDaccess).
 3. **The cap's channel names.** Write them in a text file, in the order of
    the amplifier's inputs: one per line, 64 lines, the last one `HEOG`. For
@@ -73,7 +73,7 @@ and the eye tracker's delays uneven.
 4. **The project.** With the g.HIamp switched on and connected:
 
    ```bash
-   python validation/make_project.py "~/brAIn dump/lab-validation" --lab \
+   python validation/make_project.py "~/brAIn stream/lab-validation" --lab \
        --stimulus-host <stimulus computer's address> \
        --electrodes cap64.txt --screen-width-cm <screen width>
    ```
@@ -84,14 +84,14 @@ and the eye tracker's delays uneven.
      50 Hz notch, chosen from those the amplifier offers. If it doesn't
      offer them, the script lists the ones it does.
    - **GP3:** remote, at the stimulus computer.
-   - **LSL streams:** listening for `brAIndumpValidation`.
+   - **LSL streams:** listening for `brAInstreamValidation`.
    - **Screen Capture:** OBS over NDI.
    - **Video Stream:** the first camera. Give `--webcam "<name>"` to choose
      another.
 
    Give the participant's screen's physical width: accuracy is measured in
    degrees. Add `--reference`/`--ground` to describe them in the recording.
-   To check the settings, open the project in brAIn dump: the g.HIamp's
+   To check the settings, open the project in brAIn stream: the g.HIamp's
    page, Settings, shows the channels and the amplifier's filters.
 
 ### Stimulus computer
@@ -153,7 +153,7 @@ On the **stimulus computer**:
 
 On the **recording computer**:
 
-3. Start brAIn dump and open the lab-validation project.
+3. Start brAIn stream and open the lab-validation project.
 4. Fit the cap and the EOG electrodes. Connect the g.HIamp: every channel
    in the data viewer should show clean EEG, without drift or 50 Hz.
 5. **Connect all** (the plug button).
@@ -171,7 +171,7 @@ On the **stimulus computer**:
    python face_validation.py --faces <faces folder> --participant 01 --screen 0
    ```
 
-   It waits until brAIn dump receives its markers.
+   It waits until brAIn stream receives its markers.
 
 On the **recording computer**:
 
@@ -192,14 +192,14 @@ On the **stimulus computer**:
    | Moving targets | 2 × 10 s again |
    | Flashes | 10 again |
 
-9. After the debriefing screen, stop recording in brAIn dump.
+9. After the debriefing screen, stop recording in brAIn stream.
 
 ## Checking the recording
 
 On the recording computer:
 
 ```bash
-python validation/analyse.py "~/brAIn dump/lab-validation/bids" --sub 01
+python validation/analyse.py "~/brAIn stream/lab-validation/bids" --sub 01
 ```
 
 It prints each check and writes `report.md`, with figures, in
@@ -229,7 +229,7 @@ What the synchronisation check compares:
 | every recording | covers the procedure | start to end |
 
 When the screen recording or the camera is late but steady, the report
-says how many ms to add to its **Delay** in brAIn dump (Screen Capture or
+says how many ms to add to its **Delay** in brAIn stream (Screen Capture or
 Video Stream, Settings). Record again after changing it.
 
 ### When a check fails
@@ -244,7 +244,7 @@ Video Stream, Settings). Record again after changing it.
 | Moving targets | Gaze far behind (or ahead of) the targets with the saccades fine: the same as above. |
 | Flashes in the screen recording | Not found: OBS isn't capturing the participant's screen, or NDI isn't arriving. Late and steady: set the Screen Capture's Delay to the value given. |
 | Camera ↔ eye tracker | Too few jumps found: the face is too small or too dark in the picture; move the camera closer or light the face. Late and steady: add the value given to the Video Stream's Delay. Uneven (large IQR): the camera buffers frames; try a lower resolution or frame rate, or another camera. |
-| Markers recorded once | A marker recorded twice is a brAIn dump problem: report it. The other checks count each marker once. |
+| Markers recorded once | A marker recorded twice is a brAIn stream problem: report it. The other checks count each marker once. |
 
 ## Trying it without the hardware
 
