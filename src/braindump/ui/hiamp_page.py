@@ -182,6 +182,10 @@ class HIampPage(DevicePage):
         cap.words("electrodes", "Electrodes",
                   "Names of the channels in order, comma-separated (e.g. "
                   "Fp1, Fp2, F7 ...); the rest are Ch<n>")
+        cap.words("channel_types", "Other channels",
+                  "Channels that are not EEG, as number=type, e.g. 64=EOG "
+                  "for a bipolar EOG lead on channel 64 (types: EOG, ECG, "
+                  "EMG, MISC). Written into channels.tsv and eeg.json.")
         cap.line("reference", "Reference", "EEGReference")
         cap.line("ground", "Ground", "EEGGround")
         cap.line("placement", "Placement scheme", "EEGPlacementScheme")
