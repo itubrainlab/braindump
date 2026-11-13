@@ -61,3 +61,6 @@ braindump = ["resources/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: records through simulated devices; run in full only for a release (pytest -m 'not slow' skips them)",
+]

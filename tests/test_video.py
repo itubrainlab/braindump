@@ -29,6 +29,7 @@ def _record(project, devices, seconds=2.5, task="watch", warmup=1.0):
         pipeline.stop()
 
 
+@pytest.mark.slow
 def test_simulated_webcam_with_eeg(tmp_path):
     project = Project.create(tmp_path / "p", "P")
     project.add_device("unicorn", {"simulate": True})
@@ -66,6 +67,7 @@ def test_simulated_webcam_with_eeg(tmp_path):
     assert "*_video.mp4" in ignore and "*_video.json" in ignore
 
 
+@pytest.mark.slow
 def test_obs_over_ndi(tmp_path):
     """A real NDI stream, sent in this process as OBS would send it."""
     ndi = pytest.importorskip("NDIlib")

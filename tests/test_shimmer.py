@@ -121,6 +121,7 @@ def test_link_with_a_fake_unit(monkeypatch):
     assert link.battery == 81.0 and link.info["name"] == "Shimmer3-1A2B"
 
 
+@pytest.mark.slow
 def test_simulated_recording(tmp_path):
     project = Project.create(tmp_path / "p", "P")
     project.add_device("shimmer", {"simulate": True, "sampling_rate": 64.0})

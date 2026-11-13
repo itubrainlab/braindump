@@ -4,6 +4,7 @@ import gzip
 import json
 import time
 
+import pytest
 import numpy as np
 
 from braindump.devices import make_device
@@ -55,6 +56,7 @@ def test_beat_clock_continues_and_reanchors():
     assert after_gap == [130.0]                     # anchored again
 
 
+@pytest.mark.slow
 def test_simulated_recording(tmp_path):
     project = Project.create(tmp_path / "p", "P")
     project.add_device("polar", {"simulate": True, "accelerometer": True,

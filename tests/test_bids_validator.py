@@ -23,6 +23,7 @@ VALIDATOR = (os.environ.get("BIDS_VALIDATOR")
              or shutil.which("bids-validator"))
 
 
+@pytest.mark.slow
 @pytest.mark.skipif(not VALIDATOR, reason="no BIDS validator installed")
 def test_recorded_dataset_is_valid(tmp_path):
     project = Project.create(tmp_path / "p", "Validation",

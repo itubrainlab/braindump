@@ -46,7 +46,8 @@ at the versions the release was tested with.
 python -m venv .venv && .venv/bin/pip install -e ".[test,shimmer]"
 .venv/bin/braindump              # choose or create a project
 .venv/bin/braindump --simulate   # no hardware
-.venv/bin/python -m pytest       # BIDS_VALIDATOR=.venv/bin/bids-validator-deno to validate too
+.venv/bin/python -m pytest -m "not slow"   # the quick tests, about 20 s
+.venv/bin/python -m pytest       # all of them; BIDS_VALIDATOR=.venv/bin/bids-validator-deno to validate too
 ```
 
 `shimmer` installs pyshimmer (GPL-3.0), which the Shimmer3 GSR+ needs; the
@@ -169,9 +170,13 @@ packaging/linux/build_linux.sh        # dist/brAIndump-<version>-linux-x86_64.ta
 packaging/windows/build_windows.sh    # dist/brAIndump-<version>-windows-x86_64.zip
 ```
 
-The [Test and build](.github/workflows/build.yml) workflow runs the tests on
-all three systems, builds the packages, installs each on its own system and
-runs [packaging/smoke_test.py](packaging/smoke_test.py) with every device
+Every push and pull request runs the [Check](.github/workflows/check.yml)
+workflow: the quick tests, on Linux. The tests marked `slow`, which record
+through the simulated devices, run only in the
+[Release](.github/workflows/build.yml) workflow, started by a `v*` tag (or by
+hand from the Actions tab). It runs every test on all three systems, builds the
+packages, installs each on its own system and runs
+[packaging/smoke_test.py](packaging/smoke_test.py) with every device
 simulated. To release: write `docs/releases/v<version>.md`, set
 `__version__` in `src/braindump/__init__.py`, commit, and push a
 `v<version>` tag.

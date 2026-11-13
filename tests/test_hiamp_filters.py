@@ -75,6 +75,7 @@ def test_load_filters_without_connecting(tmp_path):
         amp.stop()
 
 
+@pytest.mark.slow
 def test_first_connect_uses_the_default(tmp_path):
     project, amp = _device(tmp_path, "first")
     assert amp.config.known_filters("bandpass") == []
@@ -111,6 +112,7 @@ def _share(data, above):
     return p[f > above].sum() / p[f > 2].sum()
 
 
+@pytest.mark.slow
 def test_recordings_are_filtered_and_described(tmp_path):
     _, probe = _device(tmp_path, "probe")
     probe.load_filters()

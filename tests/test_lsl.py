@@ -1,6 +1,7 @@
 """LSL streams recorded as BIDS events, merged with the EEG's."""
 import time
 
+import pytest
 import pylsl
 
 from conftest import connect_all
@@ -18,6 +19,7 @@ def test_selector_matching():
     assert not matches({"name": "Other"}, info)
 
 
+@pytest.mark.slow
 def test_markers_become_events(tmp_path):
     outlet = pylsl.StreamOutlet(pylsl.StreamInfo(
         "BrainDumpTestStim", "Markers", 1, 0, "string", "bd-test-stim"))

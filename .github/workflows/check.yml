@@ -1,0 +1,38 @@
+# The quick check on every push and pull request: Linux only, without the
+# slow tests that record through simulated devices. The full tests on all
+# three systems, and the packages, run only for a release (build.yml).
+name: Check
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**.md"]
+  pull_request:
+    paths-ignore: ["docs/**", "**.md"]
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  QT_QPA_PLATFORM: offscreen
+
+jobs:
+  tests:
+    name: Quick tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+      - name: Qt's libraries
+        run: bash .github/qt-libs.sh
+      - name: Set up .venv
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --python .venv -e ".[test,shimmer,validation]"
+      - name: Tests
+        run: .venv/bin/python -m pytest -q -rs -m "not slow"
